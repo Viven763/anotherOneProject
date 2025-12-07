@@ -30,7 +30,7 @@ __constant uint keccak_piln[24] = {
 
 // Note: rotl64 is defined in sha2.cl using OpenCL's rotate() function
 
-void keccak256(const uchar *input, uint input_len, uchar *output) {
+void keccak256(__private const uchar *input, uint input_len, __private uchar *output) {
     ulong state[25] = {0};
     uchar temp[144] = {0};
 

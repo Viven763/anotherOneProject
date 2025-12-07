@@ -30,7 +30,7 @@ typedef struct {
   public_key_t public_key;
 } extended_public_key_t;
 
-void hmac_sha512(uchar *key, int key_length_bytes, uchar *message, int message_length_bytes, uchar *output) {
+void hmac_sha512(__private uchar *key, int key_length_bytes, __private uchar *message, int message_length_bytes, __private uchar *output) {
   uchar ipad_key[128];
   uchar opad_key[128];
   for(int x=0;x<128;x++){
@@ -64,7 +64,7 @@ void hmac_sha512(uchar *key, int key_length_bytes, uchar *message, int message_l
   sha512(&inner_concat, 192, output);
 }
 
-void new_master_from_seed(uchar network, uchar *seed, extended_private_key_t * master) {
+void new_master_from_seed(uchar network, __private uchar *seed, extended_private_key_t * master) {
   uchar key[12] = { 0x42, 0x69, 0x74, 0x63, 0x6f, 0x69, 0x6e, 0x20, 0x73, 0x65, 0x65, 0x64 };
   uchar hmacsha512_result[64] = { 0 };
   hmac_sha512(&key, 12, seed, 64, &hmacsha512_result);
@@ -92,32 +92,32 @@ void public_from_private(extended_private_key_t *priv, extended_public_key_t *pu
   secp256k1_ec_pubkey_create(&pub->public_key.key, &priv->private_key.key);
 }
 
-void serialized_public_key(extended_public_key_t *pub, uchar *serialized_key) {
+void serialized_public_key(extended_public_key_t *pub, __private uchar *serialized_key) {
   secp256k1_ec_pubkey_serialize(serialized_key, 33, &pub->public_key.key, SECP256K1_EC_COMPRESSED);
 }
 
-void uncompressed_public_key(extended_public_key_t *pub, uchar *serialized_key) {
+void uncompressed_public_key(extended_public_key_t *pub, __private uchar *serialized_key) {
   secp256k1_ec_pubkey_serialize(serialized_key, 65, &pub->public_key.key, SECP256K1_EC_UNCOMPRESSED);
 }
 
-void sha256d(uchar *input, int input_len, char * output) {
+void sha256d(__private uchar *input, int input_len, __private char * output) {
   sha256(input, input_len, output);
   sha256(output, 32, output);
 }
 
-void hash160(uchar *input, int input_len, char * output) {
+void hash160(__private uchar *input, int input_len, __private char * output) {
   uchar sha256_result[32] = { 0 };
   sha256(input, input_len, &sha256_result);
   ripemd160(&sha256_result, 32, output);
 }
 
-void identifier_for_public_key(extended_public_key_t *pub, uchar *identifier) {
+void identifier_for_public_key(extended_public_key_t *pub, __private uchar *identifier) {
   uchar serialized_key[33] = {0};
   serialized_public_key(pub, &serialized_key);
   hash160(&serialized_key, 33, identifier);
 }
 
-void fingerprint_for_public_key(extended_public_key_t *pub, uchar *fingerprint) {
+void fingerprint_for_public_key(extended_public_key_t *pub, __private uchar *fingerprint) {
   uchar identifier[20] = { 0 };
   identifier_for_public_key(pub, &identifier);
   fingerprint[0] = identifier[0];

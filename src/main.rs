@@ -282,6 +282,9 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Build and execute kernel
+            // Устанавливаем маленький local_work_size чтобы уменьшить register pressure
+            let local_work_size = 64; // Маленькие work groups = меньше одновременных потоков
+
             let kernel_result = pro_que.kernel_builder("check_mnemonics_eth_db")
                 .arg(&db_buffer)
                 .arg(db.records.len() as u64)
@@ -290,6 +293,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
                 .arg(&result_offset)
                 .arg(chunk_offset)
                 .global_work_size(chunk_size as usize)
+                .local_work_size(local_work_size)
                 .build()
                 .and_then(|k| unsafe { k.enq() });
 

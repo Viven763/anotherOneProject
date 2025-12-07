@@ -26,11 +26,18 @@ const KNOWN_WORDS: [&str; 20] = [
 
 // === API структуры для работы с сервером ===
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 struct WorkResponse {
+    #[serde(default)]
     indices: Vec<u128>,
+    #[serde(default)]
     offset: u128,
+    #[serde(default = "default_batch_size")]
     batch_size: u64,
+}
+
+fn default_batch_size() -> u64 {
+    BATCH_SIZE as u64
 }
 
 struct Work {

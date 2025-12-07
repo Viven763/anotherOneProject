@@ -207,7 +207,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
     // Адаптивный batch size: начинаем с BATCH_SIZE, уменьшаем если нехватка памяти
     let mut current_batch_size = BATCH_SIZE;
-    let min_batch_size = 100_000;
+    let min_batch_size = 10_000;
 
     // 6. Main worker loop
     loop {

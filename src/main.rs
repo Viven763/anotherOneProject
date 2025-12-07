@@ -152,40 +152,45 @@ __kernel void generate_eth_addresses(
 
     ulong current_offset = start_offset + gid;
 
-    // Для 2 неизвестных слов: 2048 × 8 = 16,384 комбинаций
+    // Для 4 неизвестных слов: 2048^4 = 17,592,186,044,416 комбинаций
+    // - Слово 20: 2048 вариантов (11 бит)
+    // - Слово 21: 2048 вариантов (11 бит)
     // - Слово 22: 2048 вариантов (11 бит)
-    // - Последние 3 бита энтропии: 8 вариантов
-    // - Слово 23: вычисляется из checksum
+    // - Слово 23: вычисляется из checksum (8 бит checksum + 3 бита энтропии)
 
-    uint last_3_bits = (uint)(current_offset % 8UL);           // 0-7
-    uint w22_idx = (uint)((current_offset / 8UL) % 2048UL);    // word 23 (0-2047)
+    uint last_3_bits = (uint)(current_offset % 8UL);                      // 0-7
+    ulong temp = current_offset / 8UL;
+    uint w22_idx = (uint)(temp % 2048UL);                                 // word 22 (0-2047)
+    temp = temp / 2048UL;
+    uint w21_idx = (uint)(temp % 2048UL);                                 // word 21 (0-2047)
+    uint w20_idx = (uint)((temp / 2048UL) % 2048UL);                      // word 20 (0-2047)
 
     // Build array of all 24 word indices
-    // 22 известных слова (hardcoded indices from english.txt, 0-based)
+    // 20 известных слов (hardcoded indices from english.txt, 0-based)
     uint word_indices[24];
-    word_indices[0] = 551;    // eager
-    word_indices[1] = 1893;   // uncover
-    word_indices[2] = 1485;   // rifle
-    word_indices[3] = 1333;   // pluck
-    word_indices[4] = 222;    // bridge
-    word_indices[5] = 1918;   // used
-    word_indices[6] = 1637;   // smile
-    word_indices[7] = 1191;   // neutral
-    word_indices[8] = 159;    // become
-    word_indices[9] = 559;    // echo
-    word_indices[10] = 833;   // habit
-    word_indices[11] = 1991;  // wedding
-    word_indices[12] = 1847;  // tragic
-    word_indices[13] = 1498;  // robust
-    word_indices[14] = 1251;  // organ
-    word_indices[15] = 923;   // inflict
-    word_indices[16] = 562;   // edge
-    word_indices[17] = 618;   // essence
-    word_indices[18] = 229;   // bronze
-    word_indices[19] = 1763;  // symbol
-    word_indices[20] = 1808;  // tilt
-    word_indices[21] = 230;   // broom (KNOWN!)
-    word_indices[22] = w22_idx;  // UNKNOWN - перебираем
+    word_indices[0] = 1761;   // switch
+    word_indices[1] = 1263;   // over
+    word_indices[2] = 683;    // fever
+    word_indices[3] = 709;    // flavor
+    word_indices[4] = 1431;   // real
+    word_indices[5] = 955;    // jazz
+    word_indices[6] = 1925;   // vague
+    word_indices[7] = 1734;   // sugar
+    word_indices[8] = 1802;   // throw
+    word_indices[9] = 1704;   // steak
+    word_indices[10] = 2040;  // yellow
+    word_indices[11] = 1522;  // salad
+    word_indices[12] = 424;   // crush
+    word_indices[13] = 520;   // donate
+    word_indices[14] = 1800;  // three
+    word_indices[15] = 151;   // base
+    word_indices[16] = 136;   // baby
+    word_indices[17] = 275;   // carbon
+    word_indices[18] = 379;   // control
+    word_indices[19] = 658;      // false
+    word_indices[20] = w20_idx;  // UNKNOWN word 20 - перебираем
+    word_indices[21] = w21_idx;  // UNKNOWN word 21 - перебираем
+    word_indices[22] = w22_idx;  // UNKNOWN word 22 - перебираем
 
     // Calculate word 23 with valid BIP39 checksum
     // Pack 253 bits (from 23 words * 11 = 253 bits)

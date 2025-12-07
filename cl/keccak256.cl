@@ -18,17 +18,60 @@ __constant ulong keccak_round_constants[24] = {
     0x0000000080000001UL, 0x8000000080008008UL
 };
 
-__constant uint keccak_rotc[24] = {
-    1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14,
-    27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44
+// Rotation offsets for all 25 positions (x + 5*y indexing)
+__constant uint keccak_rho[25] = {
+     0,  1, 62, 28, 27,
+    36, 44,  6, 55, 20,
+     3, 10, 43, 25, 39,
+    41, 45, 15, 21,  8,
+    18,  2, 61, 56, 14
 };
 
-__constant uint keccak_piln[24] = {
-    10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4,
-    15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1
+// Pi permutation: pi[i] gives the source index for destination i
+__constant uint keccak_pi[25] = {
+     0,  6, 12, 18, 24,
+     3,  9, 10, 16, 22,
+     1,  7, 13, 19, 20,
+     4,  5, 11, 17, 23,
+     2,  8, 14, 15, 21
 };
 
 // Note: rotl64 is defined in sha2.cl using OpenCL's rotate() function
+
+// Keccak-f[1600] permutation
+void keccak_f(ulong state[25]) {
+    for (uint round = 0; round < KECCAK_ROUNDS; round++) {
+        ulong C[5], D[5], B[25];
+
+        // Theta
+        for (uint i = 0; i < 5; i++) {
+            C[i] = state[i] ^ state[i + 5] ^ state[i + 10] ^ state[i + 15] ^ state[i + 20];
+        }
+        for (uint i = 0; i < 5; i++) {
+            D[i] = C[(i + 4) % 5] ^ rotl64(C[(i + 1) % 5], 1);
+        }
+        for (uint i = 0; i < 25; i++) {
+            state[i] ^= D[i % 5];
+        }
+
+        // Rho and Pi steps combined
+        for (uint i = 0; i < 25; i++) {
+            uint src = keccak_pi[i];
+            B[i] = rotl64(state[src], keccak_rho[src]);
+        }
+
+        // Chi step - operates within each row (same y)
+        for (uint y = 0; y < 5; y++) {
+            for (uint x = 0; x < 5; x++) {
+                uint i = x + 5 * y;
+                state[i] = B[i] ^ ((~B[(x + 1) % 5 + 5 * y]) & B[(x + 2) % 5 + 5 * y]);
+            }
+        }
+
+        // Iota
+        state[0] ^= keccak_round_constants[round];
+    }
+}
 
 void keccak256(__generic const uchar *input, uint input_len, __generic uchar *output) {
     ulong state[25] = {0};
@@ -48,34 +91,7 @@ void keccak256(__generic const uchar *input, uint input_len, __generic uchar *ou
         }
 
         // Keccak-f[1600] permutation
-        for (uint round = 0; round < KECCAK_ROUNDS; round++) {
-            ulong C[5], D[5];
-
-            // Theta
-            for (uint i = 0; i < 5; i++) {
-                C[i] = state[i] ^ state[i + 5] ^ state[i + 10] ^ state[i + 15] ^ state[i + 20];
-            }
-            for (uint i = 0; i < 5; i++) {
-                D[i] = C[(i + 4) % 5] ^ rotl64(C[(i + 1) % 5], 1);
-            }
-            for (uint i = 0; i < 25; i++) {
-                state[i] ^= D[i % 5];
-            }
-
-            // Rho and Pi
-            ulong B[25];
-            for (uint i = 0; i < 25; i++) {
-                B[keccak_piln[i]] = rotl64(state[i], keccak_rotc[i]);
-            }
-
-            // Chi
-            for (uint i = 0; i < 25; i++) {
-                state[i] = B[i] ^ ((~B[(i + 5) % 25]) & B[(i + 10) % 25]);
-            }
-
-            // Iota
-            state[0] ^= keccak_round_constants[round];
-        }
+        keccak_f(state);
 
         input_len -= rate;
         offset += rate;
@@ -101,34 +117,7 @@ void keccak256(__generic const uchar *input, uint input_len, __generic uchar *ou
     }
 
     // Final permutation
-    for (uint round = 0; round < KECCAK_ROUNDS; round++) {
-        ulong C[5], D[5];
-
-        // Theta
-        for (uint i = 0; i < 5; i++) {
-            C[i] = state[i] ^ state[i + 5] ^ state[i + 10] ^ state[i + 15] ^ state[i + 20];
-        }
-        for (uint i = 0; i < 5; i++) {
-            D[i] = C[(i + 4) % 5] ^ rotl64(C[(i + 1) % 5], 1);
-        }
-        for (uint i = 0; i < 25; i++) {
-            state[i] ^= D[i % 5];
-        }
-
-        // Rho and Pi
-        ulong B[25];
-        for (uint i = 0; i < 25; i++) {
-            B[keccak_piln[i]] = rotl64(state[i], keccak_rotc[i]);
-        }
-
-        // Chi
-        for (uint i = 0; i < 25; i++) {
-            state[i] = B[i] ^ ((~B[(i + 5) % 25]) & B[(i + 10) % 25]);
-        }
-
-        // Iota
-        state[0] ^= keccak_round_constants[round];
-    }
+    keccak_f(state);
 
     // Squeeze phase - extract 32 bytes (256 bits)
     for (uint i = 0; i < 4; i++) {

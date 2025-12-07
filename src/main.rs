@@ -375,9 +375,10 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
             // CPU проверка в БД
             print!("   🔍 CPU lookup...");
+            let mut found_count = 0;
             for i in 0..chunk_size as usize {
                 let addr_suffix = addresses[i];
-                
+
                 // Binary search в БД
                 if db.lookup_address_suffix(addr_suffix) {
                     // НАЙДЕНО!
@@ -385,14 +386,21 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
                     let mnemonic_bytes = &mnemonics_data[mnemonic_start..mnemonic_start + 192];
                     let mnemonic = String::from_utf8_lossy(mnemonic_bytes);
                     let mnemonic_clean = mnemonic.trim_matches('\0').trim();
-                    
+
                     let eth_address = format!("0x...{:016x}", addr_suffix);
-                    
-                    log_solution(work.offset_for_server, mnemonic_clean.to_string(), eth_address)?;
-                    return Ok(());
+
+                    // Отправляем решение, но НЕ останавливаемся
+                    if let Err(e) = log_solution(work.offset_for_server + i as u128, mnemonic_clean.to_string(), eth_address) {
+                        eprintln!("⚠️  Ошибка отправки решения: {}", e);
+                    }
+                    found_count += 1;
                 }
             }
-            println!(" done");
+            if found_count > 0 {
+                println!(" done (найдено: {})", found_count);
+            } else {
+                println!(" done");
+            }
 
             processed += chunk_size;
             println!("   ✓ Обработано {}/{}", processed, work.batch_size);

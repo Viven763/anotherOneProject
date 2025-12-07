@@ -17,15 +17,39 @@ void mnemonic_to_seed(
     uchar ipad_key[128];
     uchar opad_key[128];
 
-    for(int x=0; x<128; x++) {
-        ipad_key[x] = 0x36;
-        opad_key[x] = 0x5c;
+    // HMAC key handling: if key > 128 bytes, hash it first
+    uchar hmac_key[128];
+    uint hmac_key_len;
+
+    if (mnemonic_length > 128) {
+        // Hash the mnemonic to get a 64-byte key
+        uchar hash_buffer[192];
+        for(int i = 0; i < mnemonic_length && i < 192; i++) {
+            hash_buffer[i] = mnemonic[i];
+        }
+        uchar hashed_key[64];
+        sha512((ulong*)hash_buffer, mnemonic_length, (ulong*)hashed_key);
+        for(int i = 0; i < 64; i++) {
+            hmac_key[i] = hashed_key[i];
+        }
+        for(int i = 64; i < 128; i++) {
+            hmac_key[i] = 0;
+        }
+        hmac_key_len = 64;
+    } else {
+        // Key fits in block, just copy and pad with zeros
+        for(int i = 0; i < mnemonic_length; i++) {
+            hmac_key[i] = mnemonic[i];
+        }
+        for(int i = mnemonic_length; i < 128; i++) {
+            hmac_key[i] = 0;
+        }
+        hmac_key_len = mnemonic_length;
     }
 
-    // XOR mnemonic with pads
-    for(int x=0; x<mnemonic_length && x<128; x++) {
-        ipad_key[x] = ipad_key[x] ^ mnemonic[x];
-        opad_key[x] = opad_key[x] ^ mnemonic[x];
+    for(int x=0; x<128; x++) {
+        ipad_key[x] = 0x36 ^ hmac_key[x];
+        opad_key[x] = 0x5c ^ hmac_key[x];
     }
 
     // Initialize seed to zeros

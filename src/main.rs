@@ -14,7 +14,7 @@ use serde::Deserialize;
 const WORK_SERVER_URL: &str = "http://90.156.225.121:3000";
 const WORK_SERVER_SECRET: &str = "15a172308d70dede515f9eecc78eaea9345b419581d0361220313d938631b12d";
 const DATABASE_PATH: &str = "eth20240925";
-const BATCH_SIZE: usize = 100_000; // 100K комбинаций за batch - консервативный старт для RTX 5090
+const BATCH_SIZE: usize = 10_000; // 10K комбинаций за batch - безопасный старт
 
 // Известные 20 слов
 const KNOWN_WORDS: [&str; 20] = [
@@ -211,15 +211,16 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ БД загружена в GPU!\n");
 
     // 5. Рассчитываем оптимальный batch size на основе доступной памяти
-    let db_size_bytes = db.records.len() * std::mem::size_of::<u64>();
+    let db_size_bytes = db.records.len() * 12; // DbRecord = 12 bytes (4 hash + 8 addr_suffix)
     let available_memory = (global_mem_size as f64 * 0.7) as usize; // 70% от общей памяти
     let memory_for_batches = available_memory.saturating_sub(db_size_bytes);
 
-    // Каждая комбинация требует:
-    // - 24 байта для индексов (u32 * 4 неизвестных слова * 1.5x для буферов)
-    // - ~100 байт для промежуточных вычислений
-    let bytes_per_combination = 128;
-    let optimal_batch_size = (memory_for_batches / bytes_per_combination).min(BATCH_SIZE);
+    // Каждый work item (1 комбинация) требует:
+    // - Локальные массивы в kernel: mnemonic[192], seed[64], privatekey[32]
+    // - Промежуточные буферы в PBKDF2/SHA/Keccak: ~1KB стека
+    // - Консервативная оценка: 2KB на work item
+    let bytes_per_work_item = 2048;
+    let optimal_batch_size = (memory_for_batches / bytes_per_work_item).min(BATCH_SIZE);
 
     println!("💾 Расчет памяти:");
     println!("   Доступно GPU памяти: {} MB", global_mem_size / 1024 / 1024);

@@ -1,0 +1,29 @@
+{
+  "known_words": [
+    "switch",
+    "over",
+    "fever",
+    "flavor",
+    "real",
+    "jazz",
+    "vague",
+    "sugar",
+    "throw",
+    "steak",
+    "yellow",
+    "salad",
+    "crush",
+    "donate",
+    "three",
+    "base",
+    "baby",
+    "carbon",
+    "control",
+    "false"
+  ],
+  "missing_positions": [20, 21, 22, 23],
+  "total_words": 24,
+  "database_path": "eth20240925",
+  "derivation_path": "m/44'/60'/0'/0/0",
+  "addresses_to_check": 10
+}

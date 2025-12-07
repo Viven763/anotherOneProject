@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # Оркестратор (работа coordinator)
+  orchestrator:
+    build:
+      context: ../bip39-solver-server
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../bip39-solver-server:/app
+      - orchestrator-data:/app/data
+    environment:
+      - PORT=3000
+      - SECRET=your-secret-key-change-this
+    networks:
+      - eth-recovery-network
+    restart: unless-stopped
+
+  # GPU Worker (может быть несколько)
+  gpu-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - orchestrator
+    environment:
+      - WORK_SERVER_URL=http://orchestrator:3000
+      - WORK_SERVER_SECRET=your-secret-key-change-this
+      - DATABASE_PATH=/app/data/eth20240925
+      - RUST_LOG=info
+    volumes:
+      - ./eth20240925:/app/data/eth20240925:ro
+    networks:
+      - eth-recovery-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # Дополнительные workers (раскомментировать при наличии нескольких GPU)
+  # gpu-worker-2:
+  #   extends: gpu-worker-1
+  #   environment:
+  #     - CUDA_VISIBLE_DEVICES=1
+
+networks:
+  eth-recovery-network:
+    driver: bridge
+
+volumes:
+  orchestrator-data:

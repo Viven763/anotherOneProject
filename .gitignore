@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Database (слишком большая для git)
+eth20240925
+*.sqlite
+*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+config.local.json
+.env
+*.pem
+*.key
+
+# Logs
+*.log

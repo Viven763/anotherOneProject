@@ -135,12 +135,12 @@ fn build_kernel_source() -> Result<String, Box<dyn std::error::Error>> {
     source.push_str(r#"
 // === ОПТИМИЗИРОВАННЫЙ GPU Address Generator Kernel ===
 // Генерирует ТОЛЬКО валидные BIP39 мнемоники с правильным checksum
-// Оптимизация: 2048^3 комбинаций вместо 2048^4 (в 256 раз быстрее!)
+// Оптимизация: 2048^3 × 8 = 68.7 млрд комбинаций вместо 2048^4 (в 256 раз быстрее!)
 
 __kernel void generate_eth_addresses(
     __global ulong *result_addresses,     // Output: массив addr_suffix (8 bytes каждый)
     __global uchar *result_mnemonics,     // Output: массив мнемоник (192 bytes каждая)
-    const ulong start_offset,             // Starting offset for this batch (0 to 2048^3-1)
+    const ulong start_offset,             // Starting offset for this batch (0 to 2048^3×8-1)
     const uint batch_size                 // Количество адресов для генерации
 ) {
     uint gid = get_global_id(0);
@@ -151,13 +151,17 @@ __kernel void generate_eth_addresses(
 
     ulong current_offset = start_offset + gid;
 
-    // ВАЖНО: offset теперь перебирает только 2048^3 комбинаций (слова 20-22)
-    // Слово 23 вычисляется из BIP39 checksum
+    // ВАЖНО: offset перебирает 2048^3 × 8 комбинаций
+    // - Слова 20-22: 2048^3 комбинаций
+    // - Последние 3 бита энтропии: 8 вариантов
+    // - Слово 23: вычисляется из checksum
 
-    // Calculate indices for words 20-22 (only 3 words, NOT 4!)
-    uint w22_idx = (uint)(current_offset % 2048UL);          // word 23 (0-indexed as 22)
-    uint w21_idx = (uint)((current_offset / 2048UL) % 2048UL);     // word 22
-    uint w20_idx = (uint)((current_offset / 4194304UL) % 2048UL);  // word 21
+    // Decompose offset: (w20, w21, w22, last_3_bits)
+    uint last_3_bits = (uint)(current_offset % 8UL);                          // 0-7
+    ulong word_offset = current_offset / 8UL;                                  // комбинация слов
+    uint w22_idx = (uint)(word_offset % 2048UL);                              // word 23
+    uint w21_idx = (uint)((word_offset / 2048UL) % 2048UL);                   // word 22
+    uint w20_idx = (uint)((word_offset / 4194304UL) % 2048UL);                // word 21
 
     // Hardcoded known word indices (positions 0-19)
     __constant const uint known_indices[20] = {
@@ -177,7 +181,7 @@ __kernel void generate_eth_addresses(
     word_indices[22] = w22_idx;
 
     // Calculate word 23 with valid BIP39 checksum
-    // Pack first 256 bits (23 words * 11 bits + 3 bits from word 24)
+    // Pack first 253 bits (from 23 words * 11 = 253 bits)
     uchar entropy[32];
     for(int i = 0; i < 32; i++) entropy[i] = 0;
 
@@ -195,30 +199,19 @@ __kernel void generate_eth_addresses(
         }
     }
 
-    // Try all 8 possible values for last 3 bits and find valid checksum
-    uint w23_idx = 0;
-    for(uint last_3_bits = 0; last_3_bits < 8; last_3_bits++) {
-        uchar temp_entropy[32];
-        for(int i = 0; i < 32; i++) temp_entropy[i] = entropy[i];
+    // Add last 3 bits (bits 253-255) to complete 256 bits of entropy
+    // These 3 bits are in byte 31, bits 5-7
+    entropy[31] = (entropy[31] & 0xF8) | last_3_bits;
 
-        // Set bits 253-255
-        temp_entropy[31] = (temp_entropy[31] & 0xF8) | last_3_bits;
+    // Calculate SHA256 of 256-bit entropy
+    uchar hash[32];
+    sha256(entropy, 32, hash);
 
-        // Calculate SHA256
-        uchar hash[32];
-        sha256(temp_entropy, 32, hash);
+    // Checksum = first 8 bits of hash
+    uchar checksum = hash[0];
 
-        // Checksum = first 8 bits of hash
-        uchar checksum = hash[0];
-
-        // Last word = (last_3_bits << 8) | checksum
-        uint candidate = (last_3_bits << 8) | checksum;
-
-        if(candidate < 2048) {
-            w23_idx = candidate;
-            break;
-        }
-    }
+    // Last word (24th) = (last_3_bits << 8) | checksum
+    uint w23_idx = (last_3_bits << 8) | checksum;
 
     word_indices[23] = w23_idx;
 
@@ -414,9 +407,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  ");
     println!("  ⚡ ОПТИМИЗАЦИЯ: BIP39 Checksum");
     println!("  - Слова 20-22: 2048^3 комбинаций");
+    println!("  - Последние 3 бита энтропии: 8 вариантов");
     println!("  - Слово 23: вычисляется из checksum");
-    println!("  - Валидных комбинаций: 2048^3 = 8.59 миллиардов");
-    println!("  - Это в 256 раз быстрее, чем 2048^4!\n");
+    println!("  - Валидных комбинаций: 2048^3 × 8 = 68.7 миллиардов");
+    println!("  - Это в 256 раз быстрее, чем 2048^4 (17.6 трлн)!\n");
 
     println!("Известные слова:");
     for (i, word) in KNOWN_WORDS.iter().enumerate() {

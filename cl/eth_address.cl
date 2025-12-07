@@ -9,7 +9,7 @@ void eth_address_for_public_key(extended_public_key_t *pub, __private uchar *eth
 
     // Ethereum uses keccak256(pubkey[1:]) - skip the 0x04 prefix
     uchar keccak_hash[32] = {0};
-    keccak256(&uncompressed_pubkey[1], 64, keccak_hash);
+    keccak256(uncompressed_pubkey + 1, 64, keccak_hash);
 
     // Ethereum address is the last 20 bytes of the keccak256 hash
     for(int i = 0; i < 20; i++) {

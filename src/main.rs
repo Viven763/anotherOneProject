@@ -14,7 +14,7 @@ use serde::Deserialize;
 const WORK_SERVER_URL: &str = "http://90.156.225.121:3000";
 const WORK_SERVER_SECRET: &str = "15a172308d70dede515f9eecc78eaea9345b419581d0361220313d938631b12d";
 const DATABASE_PATH: &str = "eth20240925";
-const BATCH_SIZE: usize = 1_000_000_000; // 1B комбинаций за batch
+const BATCH_SIZE: usize = 5_000_000; // 5M комбинаций за batch
 
 // Известные 20 слов
 const KNOWN_WORDS: [&str; 20] = [

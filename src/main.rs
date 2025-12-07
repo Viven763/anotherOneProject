@@ -14,7 +14,7 @@ use serde::Deserialize;
 const WORK_SERVER_URL: &str = "http://90.156.225.121:3000";
 const WORK_SERVER_SECRET: &str = "15a172308d70dede515f9eecc78eaea9345b419581d0361220313d938631b12d";
 const DATABASE_PATH: &str = "eth20240925";
-const BATCH_SIZE: usize = 1_000_000; // 1M комбинаций за batch
+const BATCH_SIZE: usize = 500_000; // 500k комбинаций за batch
 
 // Известные 20 слов
 const KNOWN_WORDS: [&str; 20] = [
@@ -171,7 +171,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Create OpenCL context
     let pro_que = ProQue::builder()
-        .src(kernel_source)
+        .src(&kernel_source)
         .dims(BATCH_SIZE)
         .platform(platform)
         .device(device)
@@ -205,6 +205,11 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ GPU Worker готов к работе!\n");
 
+    // Адаптивный batch size
+    let mut current_batch_size = BATCH_SIZE;
+    let min_batch_size = 100_000;      // Минимум 100k
+    let max_batch_size = 25_000_000;   // Максимум 25M
+
     // 6. Main worker loop
     loop {
         // Получаем задание от оркестратора
@@ -219,60 +224,95 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        println!("✅ Получено задание:");
-        println!("   Start offset: {}", work.start_offset);
-        println!("   Batch size: {}", work.batch_size);
+        // Обрабатываем работу частями (chunking)
+        let mut processed = 0u64;
+        while processed < work.batch_size {
+            let chunk_size = std::cmp::min(current_batch_size as u64, work.batch_size - processed);
+            let chunk_offset = work.start_offset + processed;
 
-        // Reset found flag
-        let zero = vec![0u32; 1];
-        result_found.write(&zero).enq()?;
+            println!("🔥 Обработка chunk: offset={}, size={}", chunk_offset, chunk_size);
 
-        // Build and execute kernel
-        let kernel = pro_que.kernel_builder("check_mnemonics_eth_db")
-            .arg(&db_buffer)
-            .arg(db.records.len() as u64)
-            .arg(&result_mnemonic)
-            .arg(&result_found)
-            .arg(&result_offset)
-            .arg(work.start_offset)
-            .build()?;
+            // Reset found flag
+            let zero = vec![0u32; 1];
+            result_found.write(&zero).enq()?;
 
-        println!("🔥 Запуск GPU вычислений...");
-        unsafe {
-            kernel.enq()?;
-        }
+            // Recreate ProQue with current chunk size
+            let chunk_pro_que = ProQue::builder()
+                .src(&kernel_source)
+                .dims(chunk_size as usize)
+                .platform(platform)
+                .device(device)
+                .build()?;
 
-        // Check if found
-        let mut found = vec![0u32; 1];
-        result_found.read(&mut found).enq()?;
+            // Build and execute kernel
+            let kernel_result = chunk_pro_que.kernel_builder("check_mnemonics_eth_db")
+                .arg(&db_buffer)
+                .arg(db.records.len() as u64)
+                .arg(&result_mnemonic)
+                .arg(&result_found)
+                .arg(&result_offset)
+                .arg(chunk_offset)
+                .build()
+                .and_then(|kernel| unsafe { kernel.enq() });
 
-        if found[0] == 1 {
-            // SUCCESS!
-            let mut mnemonic_bytes = vec![0u8; 192];
-            result_mnemonic.read(&mut mnemonic_bytes).enq()?;
+            match kernel_result {
+                Ok(_) => {
+                    // Успешно! Можно попробовать увеличить batch
+                    if current_batch_size < max_batch_size {
+                        current_batch_size = std::cmp::min(
+                            (current_batch_size as f64 * 1.2) as usize,
+                            max_batch_size
+                        );
+                        println!("✅ Успех! Увеличиваем batch до {}", current_batch_size);
+                    }
+                }
+                Err(e) => {
+                    // Ошибка памяти - уменьшаем batch
+                    if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
+                        current_batch_size = std::cmp::max(
+                            (current_batch_size as f64 * 0.5) as usize,
+                            min_batch_size
+                        );
+                        println!("⚠️  Нехватка памяти! Уменьшаем batch до {}", current_batch_size);
+                        continue; // Повторяем этот chunk с меньшим размером
+                    } else {
+                        return Err(e.into());
+                    }
+                }
+            }
 
-            let mut offset_vec = vec![0u64; 1];
-            result_offset.read(&mut offset_vec).enq()?;
+            // Check if found
+            let mut found = vec![0u32; 1];
+            result_found.read(&mut found).enq()?;
 
-            let mnemonic = String::from_utf8_lossy(&mnemonic_bytes);
-            let mnemonic_clean = mnemonic.trim_matches('\0').trim();
+            if found[0] == 1 {
+                // SUCCESS!
+                let mut mnemonic_bytes = vec![0u8; 192];
+                result_mnemonic.read(&mut mnemonic_bytes).enq()?;
 
-            // TODO: Extract ETH address from result
-            let eth_address = "0x...".to_string();
+                let mut offset_vec = vec![0u64; 1];
+                result_offset.read(&mut offset_vec).enq()?;
 
-            // Send to server
-            log_solution(work.offset_for_server, mnemonic_clean.to_string(), eth_address)?;
+                let mnemonic = String::from_utf8_lossy(&mnemonic_bytes);
+                let mnemonic_clean = mnemonic.trim_matches('\0').trim();
 
-            break; // Stop after finding solution
+                // TODO: Extract ETH address from result
+                let eth_address = "0x...".to_string();
+
+                // Send to server
+                log_solution(work.offset_for_server, mnemonic_clean.to_string(), eth_address)?;
+
+                return Ok(()); // Stop after finding solution
+            }
+
+            processed += chunk_size;
         }
 
         // Mark work as complete
-        println!("✅ Batch завершён, отправка подтверждения...");
+        println!("✅ Batch завершён, отправка подтверждения...\n");
         if let Err(e) = log_work_complete(work.offset_for_server) {
             eprintln!("⚠️  Ошибка отправки подтверждения: {}", e);
         }
-
-        println!();
     }
 
     Ok(())

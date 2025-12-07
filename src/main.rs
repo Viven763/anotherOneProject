@@ -163,19 +163,29 @@ __kernel void generate_eth_addresses(
     uint w21_idx = (uint)((word_offset / 2048UL) % 2048UL);                   // word 22
     uint w20_idx = (uint)((word_offset / 4194304UL) % 2048UL);                // word 21
 
-    // Hardcoded known word indices (positions 0-19)
-    __constant const uint known_indices[20] = {
-        1831, 1291, 649, 655, 1424,   // switch, over, fever, flavor, real
-        935, 1897, 1701, 1771, 1673,  // jazz, vague, sugar, throw, steak
-        2037, 1525, 412, 522, 1768,   // yellow, salad, crush, donate, three
-        136, 123, 265, 387, 636       // base, baby, carbon, control, false
-    };
-
     // Build array of all 24 word indices
+    // Hardcoded known word indices (positions 0-19)
     uint word_indices[24];
-    for(int i = 0; i < 20; i++) {
-        word_indices[i] = known_indices[i];
-    }
+    word_indices[0] = 1831;   // switch
+    word_indices[1] = 1291;   // over
+    word_indices[2] = 649;    // fever
+    word_indices[3] = 655;    // flavor
+    word_indices[4] = 1424;   // real
+    word_indices[5] = 935;    // jazz
+    word_indices[6] = 1897;   // vague
+    word_indices[7] = 1701;   // sugar
+    word_indices[8] = 1771;   // throw
+    word_indices[9] = 1673;   // steak
+    word_indices[10] = 2037;  // yellow
+    word_indices[11] = 1525;  // salad
+    word_indices[12] = 412;   // crush
+    word_indices[13] = 522;   // donate
+    word_indices[14] = 1768;  // three
+    word_indices[15] = 136;   // base
+    word_indices[16] = 123;   // baby
+    word_indices[17] = 265;   // carbon
+    word_indices[18] = 387;   // control
+    word_indices[19] = 636;   // false
     word_indices[20] = w20_idx;
     word_indices[21] = w21_idx;
     word_indices[22] = w22_idx;

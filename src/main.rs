@@ -234,6 +234,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             // Reset found flag
             let zero = vec![0u32; 1];
             if let Err(e) = result_found.write(&zero).enq() {
+                eprintln!("❌ OpenCL Error (write): {:?}", e);
                 if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
                     current_batch_size = std::cmp::max(current_batch_size / 2, min_batch_size);
                     println!("⚠️  Память: уменьшаем batch до {}", current_batch_size);
@@ -255,6 +256,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
                 .and_then(|k| unsafe { k.enq() });
 
             if let Err(e) = kernel_result {
+                eprintln!("❌ OpenCL Error (kernel): {:?}", e);
                 if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
                     current_batch_size = std::cmp::max(current_batch_size / 2, min_batch_size);
                     println!("⚠️  Память: уменьшаем batch до {}", current_batch_size);
@@ -266,6 +268,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             // Check if found
             let mut found = vec![0u32; 1];
             if let Err(e) = result_found.read(&mut found).enq() {
+                eprintln!("❌ OpenCL Error (read): {:?}", e);
                 if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
                     current_batch_size = std::cmp::max(current_batch_size / 2, min_batch_size);
                     println!("⚠️  Память: уменьшаем batch до {}", current_batch_size);

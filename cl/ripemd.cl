@@ -266,7 +266,7 @@ void ripemd160_Final( RIPEMD160_CTX *ctx, uint8_t output[20] )
     memzero(ctx, sizeof(RIPEMD160_CTX));
 }
 
-void ripemd160(const uint8_t *msg, uint32_t msg_len, uint8_t hash[20])
+void ripemd160(__generic const uint8_t *msg, uint32_t msg_len, __generic uint8_t hash[20])
 {
     RIPEMD160_CTX ctx;
     ripemd160_Init( &ctx );

@@ -52,7 +52,7 @@ void hmac_sha512(__generic uchar *key, int key_length_bytes, __generic uchar *me
     inner_concat[x+128] = message[x];
   }
 
-  sha512(&inner_concat, 128+message_length_bytes, output);
+  sha512((__generic unsigned long *)inner_concat, 128+message_length_bytes, (__generic ulong *)output);
 
   for(int x=0;x<128;x++){
     inner_concat[x] = opad_key[x];
@@ -61,7 +61,7 @@ void hmac_sha512(__generic uchar *key, int key_length_bytes, __generic uchar *me
     inner_concat[x+128] = output[x];
   }
 
-  sha512(&inner_concat, 192, output);
+  sha512((__generic unsigned long *)inner_concat, 192, (__generic ulong *)output);
 }
 
 void new_master_from_seed(uchar network, __generic uchar *seed, extended_private_key_t * master) {
@@ -166,7 +166,7 @@ void normal_private_child_from_private(extended_private_key_t *parent, extended_
   hmac_input[34] = (normal_child_number & 0x00FF0000) >> 16;
   hmac_input[35] = (normal_child_number & 0x0000FF00) >> 8;
   hmac_input[36] = (normal_child_number & 0x000000FF);
-  hmac_sha512(&parent->chain_code, 32, hmac_input, 37, hmacsha512_result);
+  hmac_sha512(parent->chain_code, 32, hmac_input, 37, hmacsha512_result);
 
   private_key_t sk;
   sk.compressed = true;
@@ -193,7 +193,7 @@ void hardened_private_child_from_private(extended_private_key_t *parent, extende
   hmac_input[35] = (child_number & 0x0000FF00) >> 8;
   hmac_input[36] = (child_number & 0x000000FF);
   
-  hmac_sha512(&parent->chain_code, 32, hmac_input, 37, hmacsha512_result);
+  hmac_sha512(parent->chain_code, 32, hmac_input, 37, hmacsha512_result);
   
   private_key_t sk;
   sk.compressed = true;

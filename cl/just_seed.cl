@@ -84,17 +84,17 @@ __kernel void just_seed(ulong mnemonic_start_hi,ulong mnemonic_start_lo, __globa
     key_previous_concat[x+128] = salt[x];
   }
 
-  sha512(&key_previous_concat, 140, &sha512_result);
-  copy_pad_previous(&opad_key, &sha512_result, &key_previous_concat);
-  sha512(&key_previous_concat, 192, &sha512_result);
-  xor_seed_with_round(&seed, &sha512_result);
+  sha512((unsigned long *)key_previous_concat, 140, (ulong *)sha512_result);
+  copy_pad_previous(opad_key, (ulong *)sha512_result, key_previous_concat);
+  sha512((unsigned long *)key_previous_concat, 192, (ulong *)sha512_result);
+  xor_seed_with_round(seed, (ulong *)sha512_result);
 
   for(int x=1;x<2048;x++){
-    copy_pad_previous(&ipad_key, &sha512_result, &key_previous_concat);
-    sha512(&key_previous_concat, 192, &sha512_result);
-    copy_pad_previous(&opad_key, &sha512_result, &key_previous_concat);
-    sha512(&key_previous_concat, 192, &sha512_result);
-    xor_seed_with_round(&seed, &sha512_result);
+    copy_pad_previous(ipad_key, (ulong *)sha512_result, key_previous_concat);
+    sha512((unsigned long *)key_previous_concat, 192, (ulong *)sha512_result);
+    copy_pad_previous(opad_key, (ulong *)sha512_result, key_previous_concat);
+    sha512((unsigned long *)key_previous_concat, 192, (ulong *)sha512_result);
+    xor_seed_with_round(seed, (ulong *)sha512_result);
   }
 
 }

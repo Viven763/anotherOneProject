@@ -213,7 +213,7 @@ static void sha256_process2 (const unsigned int *W, unsigned int *digest) {
   digest[7] += h;
 }
 
-static void sha512(unsigned long *input, const unsigned int length, ulong *hash) {
+static void sha512(__generic unsigned long *input, const unsigned int length, __generic ulong *hash) {
   const unsigned int nBlocks = md_pad_128(input, (const unsigned long) length);
   unsigned long W[0x50]={0};
   unsigned long State[8]={0};
@@ -278,10 +278,10 @@ static void sha512(unsigned long *input, const unsigned int length, ulong *hash)
   return;
 }
 
-static void sha256(__private const unsigned int *pass, int pass_len, __private unsigned int* hash) {
+static void sha256(__generic const unsigned int *pass, int pass_len, __generic unsigned int* hash) {
   int plen=pass_len/4;
-  if (mod(pass_len,4)) plen++; 
-  __private unsigned int* p = hash;
+  if (mod(pass_len,4)) plen++;
+  __generic unsigned int* p = hash;
   unsigned int W[0x10]={0};
   int loops=plen;
   int curloop=0;

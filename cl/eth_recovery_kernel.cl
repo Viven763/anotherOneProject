@@ -39,16 +39,19 @@ bool binary_search_db(
     return false;
 }
 
-// Main kernel for ETH recovery
+// Main kernel for ETH recovery - OPTIMIZED FOR LOW REGISTER USAGE
 __kernel void check_mnemonics_eth_db(
     __global const db_record_t *db_table,    // Database table in GPU memory
     const ulong db_size,                     // Number of records in database
     __global uchar *result_mnemonic,          // Output: found mnemonic (192 bytes = 24*8)
     __global uint *result_found,              // Output: 1 if found, 0 otherwise
     __global ulong *result_offset,            // Output: offset/index of found mnemonic
-    const ulong start_offset                  // Starting offset for this batch
+    const ulong start_offset,                 // Starting offset for this batch
+    __local uchar *scratch_memory            // Shared scratch space per work group
 ) {
     uint gid = get_global_id(0);
+    uint lid = get_local_id(0);
+    uint local_size = get_local_size(0);
 
     // Check if already found (early exit)
     if(*result_found == 1) {
@@ -59,9 +62,9 @@ __kernel void check_mnemonics_eth_db(
     ulong current_offset = start_offset + gid;
 
     // Generate 24-word mnemonic from offset
-    // First 20 words are known (hardcoded)
-    // Last 4 words (positions 20-23) are derived from current_offset
-    uchar mnemonic[MNEMONIC_WORDS * WORD_LENGTH] = {0};
+    // Use local memory per-thread slice to avoid register pressure
+    // Each thread gets 256 bytes of scratch space (192 mnemonic + 64 seed)
+    __local uchar *mnemonic = scratch_memory + (lid * 256);
 
     // Hardcoded known words (positions 0-19)
     __constant const char known_20_words[20][9] = {
@@ -70,6 +73,11 @@ __kernel void check_mnemonics_eth_db(
         "yellow", "salad", "crush", "donate", "three",
         "base", "baby", "carbon", "control", "false"
     };
+
+    // Initialize mnemonic area
+    for(int i = 0; i < MNEMONIC_WORDS * WORD_LENGTH; i++) {
+        mnemonic[i] = 0;
+    }
 
     // Copy known words (0-19) to mnemonic with spaces
     int pos = 0;
@@ -96,7 +104,9 @@ __kernel void check_mnemonics_eth_db(
     }
 
     // Convert mnemonic to seed using PBKDF2-HMAC-SHA512
-    uchar seed[64] = {0};
+    // Use local memory for seed too (192+64 = 256 bytes per thread)
+    __local uchar *seed = scratch_memory + (lid * 256) + 192;
+    for(int i = 0; i < 64; i++) seed[i] = 0;
     mnemonic_to_seed(mnemonic, MNEMONIC_WORDS * WORD_LENGTH, seed);
 
     // Derive Ethereum address from seed using BIP44 path m/44'/60'/0'/0/0

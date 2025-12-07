@@ -282,9 +282,10 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Build and execute kernel
-            // КРИТИЧЕСКИ ВАЖНО: RTX 5090 имеет 65536 регистров НА БЛОК
-            // При heavy kernel (PBKDF2+SHA512) нужно ОЧЕНЬ маленький local_work_size
-            let local_work_size = 8; // 8 потоков = 65536/8 = 8192 регистра на поток
+            // ОПТИМИЗАЦИЯ: используем __local memory для больших массивов
+            // Каждый поток требует 256 байт (192 mnemonic + 64 seed)
+            let local_work_size = 32; // 32 потока * 256 байт = 8KB < 48KB local memory
+            let scratch_size = local_work_size * 256; // Общий scratch buffer
 
             let kernel_result = pro_que.kernel_builder("check_mnemonics_eth_db")
                 .arg(&db_buffer)
@@ -293,6 +294,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
                 .arg(&result_found)
                 .arg(&result_offset)
                 .arg(chunk_offset)
+                .arg_local::<u8>(scratch_size) // __local uchar scratch_memory[8KB]
                 .global_work_size(chunk_size as usize)
                 .local_work_size(local_work_size)
                 .build()

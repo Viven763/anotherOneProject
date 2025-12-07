@@ -1,20 +1,19 @@
 // Ethereum BIP39 Recovery Tool - GPU Worker Client
-// Работает с bip39-solver-server оркестратором
-// Адаптировано из bip39-solver-gpu для Ethereum + Database
+// GPU генерирует адреса, CPU проверяет в БД (без загрузки БД в GPU)
 
 mod db_loader;
 
 use db_loader::Database;
 use std::collections::HashMap;
 use std::fs;
-use ocl::{flags, ProQue};
+use ocl::{flags, ProQue, Buffer};
 use serde::Deserialize;
 
 // === Конфигурация ===
 const WORK_SERVER_URL: &str = "http://90.156.225.121:3000";
 const WORK_SERVER_SECRET: &str = "15a172308d70dede515f9eecc78eaea9345b419581d0361220313d938631b12d";
 const DATABASE_PATH: &str = "eth20240925";
-const BATCH_SIZE: usize = 100_000; // 100K комбинаций, но local_work_size=8 для register pressure
+const BATCH_SIZE: usize = 262144; // 256K - максимальный batch для GPU
 
 // Известные 20 слов
 const KNOWN_WORDS: [&str; 20] = [
@@ -53,8 +52,6 @@ fn get_work() -> Result<Work, Box<dyn std::error::Error>> {
     let response = reqwest::blocking::get(&url)?;
     let work_response: WorkResponse = response.json()?;
 
-    // Для Ethereum: известные слова захардкожены в kernel
-    // Просто используем offset напрямую (0 до 2048^4)
     let start_offset = work_response.offset;
 
     Ok(Work {
@@ -103,7 +100,7 @@ fn build_kernel_source() -> Result<String, Box<dyn std::error::Error>> {
     let files = vec![
         "common.cl",
         "sha2.cl",
-        "pbkdf2_bip39.cl",           // ← PBKDF2-HMAC-SHA512 для BIP39
+        "pbkdf2_bip39.cl",
         "keccak256.cl",
         "secp256k1_common.cl",
         "secp256k1_field.cl",
@@ -114,10 +111,8 @@ fn build_kernel_source() -> Result<String, Box<dyn std::error::Error>> {
         "ripemd.cl",
         "address.cl",
         "eth_address.cl",
-        "db_lookup.cl",
         "mnemonic_constants.cl",
         "mnemonic_generator.cl",
-        "eth_recovery_kernel.cl",
     ];
 
     let mut source = String::new();
@@ -135,19 +130,100 @@ fn build_kernel_source() -> Result<String, Box<dyn std::error::Error>> {
         }
     }
 
+    // Добавляем новый kernel который возвращает адреса вместо проверки в БД
+    source.push_str(r#"
+// === GPU Address Generator Kernel ===
+// Генерирует ETH адреса, проверка в БД на CPU
+
+__kernel void generate_eth_addresses(
+    __global ulong *result_addresses,     // Output: массив addr_suffix (8 bytes каждый)
+    __global uchar *result_mnemonics,     // Output: массив мнемоник (192 bytes каждая)
+    const ulong start_offset,             // Starting offset for this batch
+    const uint batch_size                 // Количество адресов для генерации
+) {
+    uint gid = get_global_id(0);
+    
+    if (gid >= batch_size) {
+        return;
+    }
+
+    ulong current_offset = start_offset + gid;
+
+    // Генерируем мнемонику
+    uchar mnemonic[192];
+    for(int i = 0; i < 192; i++) mnemonic[i] = 0;
+
+    // Hardcoded known words (positions 0-19)
+    __constant const char known_20_words[20][9] = {
+        "switch", "over", "fever", "flavor", "real",
+        "jazz", "vague", "sugar", "throw", "steak",
+        "yellow", "salad", "crush", "donate", "three",
+        "base", "baby", "carbon", "control", "false"
+    };
+
+    // Copy known words
+    int pos = 0;
+    for(int w = 0; w < 20; w++) {
+        for(int c = 0; c < 8 && known_20_words[w][c] != '\0'; c++) {
+            mnemonic[pos++] = known_20_words[w][c];
+        }
+        mnemonic[pos++] = ' ';
+    }
+
+    // Calculate indices for last 4 words
+    uint w23_idx = (uint)(current_offset % 2048UL);
+    uint w22_idx = (uint)((current_offset / 2048UL) % 2048UL);
+    uint w21_idx = (uint)((current_offset / 4194304UL) % 2048UL);
+    uint w20_idx = (uint)((current_offset / 8589934592UL) % 2048UL);
+
+    // Append last 4 words
+    uint missing_indices[4] = {w20_idx, w21_idx, w22_idx, w23_idx};
+    for(int w = 0; w < 4; w++) {
+        for(int c = 0; c < 8 && words[missing_indices[w]][c] != '\0'; c++) {
+            mnemonic[pos++] = words[missing_indices[w]][c];
+        }
+        if(w < 3) mnemonic[pos++] = ' ';
+    }
+
+    // Convert mnemonic to seed
+    uchar seed[64];
+    for(int i = 0; i < 64; i++) seed[i] = 0;
+    mnemonic_to_seed(mnemonic, 192, seed);
+
+    // Derive Ethereum address
+    uchar eth_address[20];
+    for(int i = 0; i < 20; i++) eth_address[i] = 0;
+    derive_eth_address_bip44(seed, eth_address);
+
+    // Extract addr_suffix (last 8 bytes)
+    ulong addr_suffix = 0;
+    for(int i = 0; i < 8; i++) {
+        addr_suffix |= ((ulong)eth_address[12 + i]) << (i * 8);
+    }
+
+    // Write results
+    result_addresses[gid] = addr_suffix;
+    
+    // Copy mnemonic to output
+    for(int i = 0; i < 192; i++) {
+        result_mnemonics[gid * 192 + i] = mnemonic[i];
+    }
+}
+"#);
+
     Ok(source)
 }
 
 // === GPU Worker ===
 
 fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🚀 Запуск GPU Worker...\n");
+    println!("\n🚀 Запуск GPU Worker (CPU проверка в БД)...\n");
 
     // 1. Build OpenCL kernel
     println!("📚 Компиляция OpenCL kernel...");
     let kernel_source = build_kernel_source()?;
 
-    // 2. Select GPU device (prefer NVIDIA over CPU)
+    // 2. Select GPU device
     use ocl::{Platform, Device, DeviceType};
 
     let platform = Platform::list()
@@ -169,10 +245,10 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("   Device: {}", device.name()?);
     println!("   Type: GPU");
 
-    // 3. Create OpenCL context (dims=1 как placeholder, реальный размер задается в kernel_builder)
+    // 3. Create OpenCL context
     let pro_que = ProQue::builder()
         .src(&kernel_source)
-        .dims(1) // Минимальный placeholder, не используется для kernel execution
+        .dims(1)
         .platform(platform)
         .device(device)
         .build()?;
@@ -180,180 +256,100 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ OpenCL устройство: {}", pro_que.device().name()?);
     println!("   Max work group size: {}", pro_que.device().max_wg_size()?);
 
-    // Получаем информацию о памяти GPU
-    let global_mem_size = pro_que.device().info(ocl::enums::DeviceInfo::GlobalMemSize)
-        .ok()
-        .and_then(|info| match info {
-            ocl::enums::DeviceInfoResult::GlobalMemSize(size) => Some(size as usize),
-            _ => None,
-        })
-        .unwrap_or(8 * 1024 * 1024 * 1024); // Default 8GB if query fails
+    // 4. БД остаётся в RAM, не грузим в GPU!
+    println!("\n💾 БД остаётся в RAM (CPU lookup)");
+    println!("   Записей в БД: {}", db.records.len());
+    println!("   Размер: {} MB\n", db.stats().size_mb);
 
-    let max_mem_alloc = pro_que.device().info(ocl::enums::DeviceInfo::MaxMemAllocSize)
-        .ok()
-        .and_then(|info| match info {
-            ocl::enums::DeviceInfoResult::MaxMemAllocSize(size) => Some(size as usize),
-            _ => None,
-        })
-        .unwrap_or(global_mem_size / 4); // Default to 25% of global memory
-
-    println!("   Global memory: {} MB", global_mem_size / 1024 / 1024);
-    println!("   Max allocation: {} MB", max_mem_alloc / 1024 / 1024);
-
-    // 4. Upload database to GPU
-    println!("\n📦 Загрузка БД в GPU ({} MB)...", db.stats().size_mb);
-    let db_buffer = pro_que.buffer_builder()
-        .len(db.records.len())
-        .flags(flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR)
-        .copy_host_slice(db.get_raw_records())
+    // 5. Создаём буферы для результатов GPU
+    let batch_size = BATCH_SIZE;
+    
+    // Буфер для адресов (8 bytes * batch_size)
+    let result_addresses: Buffer<u64> = pro_que.buffer_builder()
+        .len(batch_size)
+        .flags(flags::MEM_WRITE_ONLY)
         .build()?;
 
-    println!("✅ БД загружена в GPU!\n");
-
-    // 5. Рассчитываем оптимальный batch size на основе доступной памяти
-    let db_size_bytes = db.records.len() * 12; // DbRecord = 12 bytes (4 hash + 8 addr_suffix)
-    let available_memory = (global_mem_size as f64 * 0.7) as usize; // 70% от общей памяти
-    let memory_for_batches = available_memory.saturating_sub(db_size_bytes);
-
-    // Каждый work item (1 комбинация) требует:
-    // - Локальные массивы в kernel: mnemonic[192], seed[64], privatekey[32]
-    // - Промежуточные буферы в PBKDF2/SHA/Keccak: ~1KB стека
-    // - Консервативная оценка: 2KB на work item
-    let bytes_per_work_item = 2048;
-    let optimal_batch_size = (memory_for_batches / bytes_per_work_item).min(BATCH_SIZE);
-
-    println!("💾 Расчет памяти:");
-    println!("   Доступно GPU памяти: {} MB", global_mem_size / 1024 / 1024);
-    println!("   БД занимает: {} MB", db_size_bytes / 1024 / 1024);
-    println!("   Свободно для батчей: {} MB", memory_for_batches / 1024 / 1024);
-    println!("   Оптимальный batch size: {} комбинаций\n", optimal_batch_size);
-
-    // 6. Create output buffers
-    let result_mnemonic = pro_que.buffer_builder::<u8>()
-        .len(192) // 24 words * 8 bytes
+    // Буфер для мнемоник (192 bytes * batch_size)
+    let result_mnemonics: Buffer<u8> = pro_que.buffer_builder()
+        .len(batch_size * 192)
+        .flags(flags::MEM_WRITE_ONLY)
         .build()?;
 
-    let result_found = pro_que.buffer_builder::<u32>()
-        .len(1)
-        .build()?;
-
-    let result_offset = pro_que.buffer_builder::<u64>()
-        .len(1)
-        .build()?;
-
-    println!("✅ GPU Worker готов к работе!\n");
-
-    // Адаптивный batch size: начинаем с оптимального, уменьшаем если нехватка памяти
-    let mut current_batch_size = optimal_batch_size;
-    let min_batch_size = 1024; // Минимум 1024 комбинации (но local_work_size=8!)
+    println!("✅ GPU Worker готов! (batch_size={})\n", batch_size);
 
     // 6. Main worker loop
     loop {
-        // Получаем задание от оркестратора
         println!("📥 Запрос работы у оркестратора...");
         let work = match get_work() {
             Ok(w) => w,
             Err(e) => {
                 eprintln!("❌ Ошибка получения работы: {}", e);
-                eprintln!("   Убедитесь что оркестратор запущен на {}", WORK_SERVER_URL);
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 continue;
             }
         };
 
-        // Обрабатываем работу частями
         let mut processed = 0u64;
         while processed < work.batch_size {
-            let chunk_size = std::cmp::min(current_batch_size as u64, work.batch_size - processed);
+            let chunk_size = std::cmp::min(batch_size as u64, work.batch_size - processed);
             let chunk_offset = work.start_offset + processed;
 
-            println!("🔥 Chunk: offset={}, size={}", chunk_offset, chunk_size);
+            println!("🔥 GPU генерация: offset={}, size={}", chunk_offset, chunk_size);
 
-            // Reset found flag
-            let zero = vec![0u32; 1];
-            if let Err(e) = result_found.write(&zero).enq() {
-                eprintln!("❌ OpenCL Error (write): {:?}", e);
-                if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
-                    current_batch_size = std::cmp::max(current_batch_size / 2, min_batch_size);
-                    println!("⚠️  Память: уменьшаем batch до {}", current_batch_size);
-                    continue;
-                }
-                return Err(e.into());
-            }
+            // Запускаем kernel
+            let local_work_size = 64;
+            let global_work_size = ((chunk_size as usize + local_work_size - 1) / local_work_size) * local_work_size;
 
-            // Build and execute kernel
-            // ОПТИМИЗАЦИЯ: используем __local memory для больших массивов
-            // Каждый поток требует 256 байт (192 mnemonic + 64 seed)
-            let local_work_size = 32; // 32 потока * 256 байт = 8KB < 48KB local memory
-            let scratch_size = local_work_size * 256; // Общий scratch buffer
-
-            let kernel_result = pro_que.kernel_builder("check_mnemonics_eth_db")
-                .arg(&db_buffer)
-                .arg(db.records.len() as u64)
-                .arg(&result_mnemonic)
-                .arg(&result_found)
-                .arg(&result_offset)
+            let kernel = pro_que.kernel_builder("generate_eth_addresses")
+                .arg(&result_addresses)
+                .arg(&result_mnemonics)
                 .arg(chunk_offset)
-                .arg_local::<u8>(scratch_size) // __local uchar scratch_memory[8KB]
-                .global_work_size(chunk_size as usize)
+                .arg(chunk_size as u32)
+                .global_work_size(global_work_size)
                 .local_work_size(local_work_size)
-                .build()
-                .and_then(|k| unsafe { k.enq() });
+                .build()?;
 
-            if let Err(e) = kernel_result {
-                eprintln!("❌ OpenCL Error (kernel): {:?}", e);
-                if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
-                    current_batch_size = std::cmp::max(current_batch_size / 2, min_batch_size);
-                    println!("⚠️  Память: уменьшаем batch до {}", current_batch_size);
-                    continue;
+            unsafe { kernel.enq()?; }
+            pro_que.queue().finish()?;
+
+            // Читаем результаты
+            let mut addresses = vec![0u64; chunk_size as usize];
+            result_addresses.read(&mut addresses).enq()?;
+
+            let mut mnemonics_data = vec![0u8; chunk_size as usize * 192];
+            result_mnemonics.read(&mut mnemonics_data).enq()?;
+
+            // CPU проверка в БД
+            print!("   🔍 CPU lookup...");
+            for i in 0..chunk_size as usize {
+                let addr_suffix = addresses[i];
+                
+                // Binary search в БД
+                if db.lookup_address_suffix(addr_suffix) {
+                    // НАЙДЕНО!
+                    let mnemonic_start = i * 192;
+                    let mnemonic_bytes = &mnemonics_data[mnemonic_start..mnemonic_start + 192];
+                    let mnemonic = String::from_utf8_lossy(mnemonic_bytes);
+                    let mnemonic_clean = mnemonic.trim_matches('\0').trim();
+                    
+                    let eth_address = format!("0x...{:016x}", addr_suffix);
+                    
+                    log_solution(work.offset_for_server, mnemonic_clean.to_string(), eth_address)?;
+                    return Ok(());
                 }
-                return Err(e.into());
             }
-
-            // Check if found
-            let mut found = vec![0u32; 1];
-            if let Err(e) = result_found.read(&mut found).enq() {
-                eprintln!("❌ OpenCL Error (read): {:?}", e);
-                if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
-                    current_batch_size = std::cmp::max(current_batch_size / 2, min_batch_size);
-                    println!("⚠️  Память: уменьшаем batch до {}", current_batch_size);
-                    continue;
-                }
-                return Err(e.into());
-            }
-
-            if found[0] == 1 {
-                // SUCCESS!
-                let mut mnemonic_bytes = vec![0u8; 192];
-                result_mnemonic.read(&mut mnemonic_bytes).enq()?;
-
-                let mut offset_vec = vec![0u64; 1];
-                result_offset.read(&mut offset_vec).enq()?;
-
-                let mnemonic = String::from_utf8_lossy(&mnemonic_bytes);
-                let mnemonic_clean = mnemonic.trim_matches('\0').trim();
-
-                // TODO: Extract ETH address from result
-                let eth_address = "0x...".to_string();
-
-                // Send to server
-                log_solution(work.offset_for_server, mnemonic_clean.to_string(), eth_address)?;
-
-                return Ok(()); // Stop after finding solution
-            }
+            println!(" done");
 
             processed += chunk_size;
             println!("   ✓ Обработано {}/{}", processed, work.batch_size);
         }
 
-        // Mark work as complete
         println!("✅ Batch завершён, отправка подтверждения...\n");
         if let Err(e) = log_work_complete(work.offset_for_server) {
             eprintln!("⚠️  Ошибка отправки подтверждения: {}", e);
         }
     }
-
-    Ok(())
 }
 
 // === Main ===
@@ -361,7 +357,6 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Ethereum BIP39 Recovery - GPU Worker ===\n");
 
-    // 1. Информация о задаче
     println!("Задача:");
     println!("  Тип: 24-словная BIP39 мнемоника для Ethereum");
     println!("  Известно: первые 20 слов");
@@ -377,8 +372,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("\n  20-23: ???\n");
 
-    // 2. Загружаем базу данных
-    println!("📦 Загрузка базы данных адресов...");
+    // Загружаем БД в RAM (не в GPU!)
+    println!("📦 Загрузка базы данных в RAM...");
     let db = Database::load(DATABASE_PATH)?;
     let stats = db.stats();
 
@@ -387,7 +382,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Заполненных: {} ({:.1}%)", stats.filled_records, stats.load_factor * 100.0);
     println!("   Размер: {} MB", stats.size_mb);
 
-    // 3. Проверяем подключение к оркестратору
+    // Проверяем оркестратор
     println!("\n🔗 Проверка подключения к оркестратору...");
     println!("   URL: {}", WORK_SERVER_URL);
 
@@ -395,12 +390,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => println!("✅ Оркестратор доступен"),
         Err(_) => {
             println!("⚠️  Оркестратор недоступен!");
-            println!("   Запустите сервер: cd ../bip39-solver-server && node index.js");
             return Err("Orchestrator not available".into());
         }
     }
 
-    // 4. Запускаем GPU worker
+    // Запускаем GPU worker
     run_gpu_worker(&db)?;
 
     Ok(())

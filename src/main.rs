@@ -250,6 +250,17 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
             match kernel_result {
                 Ok(_) => {
+                    // Дождаться завершения GPU операций
+                    if let Err(e) = pro_que.queue().finish() {
+                        eprintln!("⚠️  Ошибка finish: {}", e);
+                        current_batch_size = std::cmp::max(
+                            (current_batch_size as f64 * 0.5) as usize,
+                            min_batch_size
+                        );
+                        println!("⚠️  Уменьшаем batch до {}", current_batch_size);
+                        continue;
+                    }
+
                     // Успешно! Можно попробовать увеличить batch
                     if current_batch_size < max_batch_size {
                         current_batch_size = std::cmp::min(
@@ -276,7 +287,19 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
             // Check if found
             let mut found = vec![0u32; 1];
-            result_found.read(&mut found).enq()?;
+            let read_result = result_found.read(&mut found).enq();
+
+            if let Err(e) = read_result {
+                eprintln!("⚠️  Ошибка чтения результата: {}", e);
+                current_batch_size = std::cmp::max(
+                    (current_batch_size as f64 * 0.5) as usize,
+                    min_batch_size
+                );
+                println!("⚠️  Уменьшаем batch до {}", current_batch_size);
+                continue;
+            }
+
+            let found = found;
 
             if found[0] == 1 {
                 // SUCCESS!

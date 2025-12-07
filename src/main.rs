@@ -147,16 +147,40 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("📚 Компиляция OpenCL kernel...");
     let kernel_source = build_kernel_source()?;
 
-    // 2. Create OpenCL context
+    // 2. Select GPU device (prefer NVIDIA over CPU)
+    use ocl::{Platform, Device, DeviceType};
+
+    let platform = Platform::list()
+        .into_iter()
+        .find(|p| {
+            p.name().unwrap_or_default().contains("NVIDIA") ||
+            p.vendor().unwrap_or_default().contains("NVIDIA")
+        })
+        .or_else(|| Platform::list().into_iter().next())
+        .ok_or("No OpenCL platform found")?;
+
+    let device = Device::list(platform, Some(DeviceType::GPU))
+        .ok()
+        .and_then(|devices| devices.into_iter().next())
+        .ok_or("No GPU device found")?;
+
+    println!("📱 Выбрано устройство:");
+    println!("   Platform: {}", platform.name()?);
+    println!("   Device: {}", device.name()?);
+    println!("   Type: GPU");
+
+    // 3. Create OpenCL context
     let pro_que = ProQue::builder()
         .src(kernel_source)
         .dims(BATCH_SIZE)
+        .platform(platform)
+        .device(device)
         .build()?;
 
     println!("✅ OpenCL устройство: {}", pro_que.device().name()?);
     println!("   Max work group size: {}", pro_que.device().max_wg_size()?);
 
-    // 3. Upload database to GPU
+    // 4. Upload database to GPU
     println!("\n📦 Загрузка БД в GPU ({} MB)...", db.stats().size_mb);
     let db_buffer = pro_que.buffer_builder()
         .len(db.records.len())
@@ -166,7 +190,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ БД загружена в GPU!\n");
 
-    // 4. Create output buffers
+    // 5. Create output buffers
     let result_mnemonic = pro_que.buffer_builder::<u8>()
         .len(192) // 24 words * 8 bytes
         .build()?;
@@ -181,7 +205,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ GPU Worker готов к работе!\n");
 
-    // 5. Main worker loop
+    // 6. Main worker loop
     loop {
         // Получаем задание от оркестратора
         println!("📥 Запрос работы у оркестратора...");

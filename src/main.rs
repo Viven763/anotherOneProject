@@ -113,6 +113,7 @@ fn build_kernel_source() -> Result<String, Box<dyn std::error::Error>> {
         "eth_address.cl",
         "mnemonic_constants.cl",
         "mnemonic_generator.cl",
+        "bip39_checksum.cl",
     ];
 
     let mut source = String::new();
@@ -130,59 +131,108 @@ fn build_kernel_source() -> Result<String, Box<dyn std::error::Error>> {
         }
     }
 
-    // Добавляем новый kernel который возвращает адреса вместо проверки в БД
+    // Добавляем оптимизированный kernel с BIP39 checksum validation
     source.push_str(r#"
-// === GPU Address Generator Kernel ===
-// Генерирует ETH адреса, проверка в БД на CPU
+// === ОПТИМИЗИРОВАННЫЙ GPU Address Generator Kernel ===
+// Генерирует ТОЛЬКО валидные BIP39 мнемоники с правильным checksum
+// Оптимизация: 2048^3 комбинаций вместо 2048^4 (в 256 раз быстрее!)
 
 __kernel void generate_eth_addresses(
     __global ulong *result_addresses,     // Output: массив addr_suffix (8 bytes каждый)
     __global uchar *result_mnemonics,     // Output: массив мнемоник (192 bytes каждая)
-    const ulong start_offset,             // Starting offset for this batch
+    const ulong start_offset,             // Starting offset for this batch (0 to 2048^3-1)
     const uint batch_size                 // Количество адресов для генерации
 ) {
     uint gid = get_global_id(0);
-    
+
     if (gid >= batch_size) {
         return;
     }
 
     ulong current_offset = start_offset + gid;
 
-    // Генерируем мнемонику
+    // ВАЖНО: offset теперь перебирает только 2048^3 комбинаций (слова 20-22)
+    // Слово 23 вычисляется из BIP39 checksum
+
+    // Calculate indices for words 20-22 (only 3 words, NOT 4!)
+    uint w22_idx = (uint)(current_offset % 2048UL);          // word 23 (0-indexed as 22)
+    uint w21_idx = (uint)((current_offset / 2048UL) % 2048UL);     // word 22
+    uint w20_idx = (uint)((current_offset / 4194304UL) % 2048UL);  // word 21
+
+    // Hardcoded known word indices (positions 0-19)
+    __constant const uint known_indices[20] = {
+        1831, 1291, 649, 655, 1424,   // switch, over, fever, flavor, real
+        935, 1897, 1701, 1771, 1673,  // jazz, vague, sugar, throw, steak
+        2037, 1525, 412, 522, 1768,   // yellow, salad, crush, donate, three
+        136, 123, 265, 387, 636       // base, baby, carbon, control, false
+    };
+
+    // Build array of all 24 word indices
+    uint word_indices[24];
+    for(int i = 0; i < 20; i++) {
+        word_indices[i] = known_indices[i];
+    }
+    word_indices[20] = w20_idx;
+    word_indices[21] = w21_idx;
+    word_indices[22] = w22_idx;
+
+    // Calculate word 23 with valid BIP39 checksum
+    // Pack first 256 bits (23 words * 11 bits + 3 bits from word 24)
+    uchar entropy[32];
+    for(int i = 0; i < 32; i++) entropy[i] = 0;
+
+    uint bit_pos = 0;
+    for(int w = 0; w < 23; w++) {
+        uint word_val = word_indices[w];
+        for(int b = 10; b >= 0; b--) {
+            uint bit = (word_val >> b) & 1;
+            uint byte_idx = bit_pos / 8;
+            uint bit_idx = 7 - (bit_pos % 8);
+            if(byte_idx < 32) {
+                entropy[byte_idx] |= (bit << bit_idx);
+            }
+            bit_pos++;
+        }
+    }
+
+    // Try all 8 possible values for last 3 bits and find valid checksum
+    uint w23_idx = 0;
+    for(uint last_3_bits = 0; last_3_bits < 8; last_3_bits++) {
+        uchar temp_entropy[32];
+        for(int i = 0; i < 32; i++) temp_entropy[i] = entropy[i];
+
+        // Set bits 253-255
+        temp_entropy[31] = (temp_entropy[31] & 0xF8) | last_3_bits;
+
+        // Calculate SHA256
+        uchar hash[32];
+        sha256(temp_entropy, 32, hash);
+
+        // Checksum = first 8 bits of hash
+        uchar checksum = hash[0];
+
+        // Last word = (last_3_bits << 8) | checksum
+        uint candidate = (last_3_bits << 8) | checksum;
+
+        if(candidate < 2048) {
+            w23_idx = candidate;
+            break;
+        }
+    }
+
+    word_indices[23] = w23_idx;
+
+    // Build mnemonic string
     uchar mnemonic[192];
     for(int i = 0; i < 192; i++) mnemonic[i] = 0;
 
-    // Hardcoded known words (positions 0-19)
-    __constant const char known_20_words[20][9] = {
-        "switch", "over", "fever", "flavor", "real",
-        "jazz", "vague", "sugar", "throw", "steak",
-        "yellow", "salad", "crush", "donate", "three",
-        "base", "baby", "carbon", "control", "false"
-    };
-
-    // Copy known words
     int pos = 0;
-    for(int w = 0; w < 20; w++) {
-        for(int c = 0; c < 8 && known_20_words[w][c] != '\0'; c++) {
-            mnemonic[pos++] = known_20_words[w][c];
+    for(int w = 0; w < 24; w++) {
+        uint word_idx = word_indices[w];
+        for(int c = 0; c < 8 && words[word_idx][c] != '\0'; c++) {
+            mnemonic[pos++] = words[word_idx][c];
         }
-        mnemonic[pos++] = ' ';
-    }
-
-    // Calculate indices for last 4 words
-    uint w23_idx = (uint)(current_offset % 2048UL);
-    uint w22_idx = (uint)((current_offset / 2048UL) % 2048UL);
-    uint w21_idx = (uint)((current_offset / 4194304UL) % 2048UL);
-    uint w20_idx = (uint)((current_offset / 8589934592UL) % 2048UL);
-
-    // Append last 4 words
-    uint missing_indices[4] = {w20_idx, w21_idx, w22_idx, w23_idx};
-    for(int w = 0; w < 4; w++) {
-        for(int c = 0; c < 8 && words[missing_indices[w]][c] != '\0'; c++) {
-            mnemonic[pos++] = words[missing_indices[w]][c];
-        }
-        if(w < 3) mnemonic[pos++] = ' ';
+        if(w < 23) mnemonic[pos++] = ' ';
     }
 
     // Convert mnemonic to seed
@@ -203,7 +253,7 @@ __kernel void generate_eth_addresses(
 
     // Write results
     result_addresses[gid] = addr_suffix;
-    
+
     // Copy mnemonic to output
     for(int i = 0; i < 192; i++) {
         result_mnemonics[gid * 192 + i] = mnemonic[i];
@@ -361,7 +411,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Тип: 24-словная BIP39 мнемоника для Ethereum");
     println!("  Известно: первые 20 слов");
     println!("  Неизвестно: последние 4 слова (позиции 20-23)");
-    println!("  Комбинаций: 2048^4 = 17.6 триллионов\n");
+    println!("  ");
+    println!("  ⚡ ОПТИМИЗАЦИЯ: BIP39 Checksum");
+    println!("  - Слова 20-22: 2048^3 комбинаций");
+    println!("  - Слово 23: вычисляется из checksum");
+    println!("  - Валидных комбинаций: 2048^3 = 8.59 миллиардов");
+    println!("  - Это в 256 раз быстрее, чем 2048^4!\n");
 
     println!("Известные слова:");
     for (i, word) in KNOWN_WORDS.iter().enumerate() {

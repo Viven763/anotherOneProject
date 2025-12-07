@@ -113,7 +113,7 @@ fn build_kernel_source() -> Result<String, Box<dyn std::error::Error>> {
         "eth_address.cl",
         "mnemonic_constants.cl",
         "mnemonic_generator.cl",
-        "bip39_checksum.cl",
+        // "bip39_checksum.cl",  // Не используется, код встроен в kernel ниже
     ];
 
     let mut source = String::new();

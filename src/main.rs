@@ -169,9 +169,10 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("   Device: {}", device.name()?);
     println!("   Type: GPU");
 
-    // 3. Create OpenCL context (без pre-allocation dims)
+    // 3. Create OpenCL context (dims=1 как placeholder, реальный размер задается в kernel_builder)
     let pro_que = ProQue::builder()
         .src(&kernel_source)
+        .dims(1) // Минимальный placeholder, не используется для kernel execution
         .platform(platform)
         .device(device)
         .build()?;

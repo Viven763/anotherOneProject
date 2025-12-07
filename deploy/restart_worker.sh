@@ -5,14 +5,14 @@ echo "🔄 Останавливаем все процессы eth_recovery..."
 pkill -9 eth_recovery || true
 
 echo "🧹 Очистка GPU context..."
-# На NVIDIA можно попробовать сбросить GPU через nvidia-smi
-nvidia-smi --gpu-reset || echo "⚠️  GPU reset не поддерживается, пропускаем"
+# Пробуем сбросить через nvidia-smi (обычно не работает на потребительских GPU)
+nvidia-smi --gpu-reset 2>/dev/null && echo "✅ GPU reset успешен" || echo "⚠️  GPU reset не поддерживается (это нормально)"
 
-# Альтернатива: выгрузить/загрузить модуль (требует root)
-# modprobe -r nvidia_uvm && modprobe nvidia_uvm
+echo "📊 Состояние GPU:"
+nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv,noheader
 
-echo "⏳ Ждем 3 секунды..."
-sleep 3
+echo "⏳ Ждем 5 секунд для очистки context..."
+sleep 5
 
 echo "🚀 Запускаем worker заново..."
 cd /workspace/eth_recovery || exit 1

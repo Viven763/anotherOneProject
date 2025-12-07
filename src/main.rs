@@ -53,19 +53,12 @@ fn get_work() -> Result<Work, Box<dyn std::error::Error>> {
     let response = reqwest::blocking::get(&url)?;
     let work_response: WorkResponse = response.json()?;
 
-    // Комбинируем индексы в один start offset
-    let mut start: u128 = 0;
-    let mut start_shift = 128;
-
-    for idx in &work_response.indices {
-        start_shift -= 11;
-        start = start | (idx << start_shift);
-    }
-
-    start += work_response.offset;
+    // Для Ethereum: известные слова захардкожены в kernel
+    // Просто используем offset напрямую (0 до 2048^4)
+    let start_offset = work_response.offset;
 
     Ok(Work {
-        start_offset: start as u64,
+        start_offset: start_offset as u64,
         batch_size: work_response.batch_size,
         offset_for_server: work_response.offset,
     })

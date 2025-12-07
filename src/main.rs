@@ -11,8 +11,8 @@ use ocl::{flags, ProQue};
 use serde::Deserialize;
 
 // === Конфигурация ===
-const WORK_SERVER_URL: &str = "http://localhost:3000";
-const WORK_SERVER_SECRET: &str = "secret";
+const WORK_SERVER_URL: &str = "http://90.156.225.121:3000";
+const WORK_SERVER_SECRET: &str = "15a172308d70dede515f9eecc78eaea9345b419581d0361220313d938631b12d";
 const DATABASE_PATH: &str = "eth20240925";
 const BATCH_SIZE: usize = 1_000_000; // 1M комбинаций за batch
 

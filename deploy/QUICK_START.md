@@ -43,25 +43,18 @@ curl http://YOUR_VPS_IP:3000/status
 
 ---
 
-### Шаг 2: Разместите базу данных (10 минут)
+### Шаг 2: База данных уже доступна! ✅
 
-**Вариант A: На том же VPS** (рекомендуется)
-
-```bash
-# На VPS установите nginx
-apt-get install -y nginx
-systemctl start nginx
-
-# На вашем Mac загрузите БД
-scp eth_recovery/eth20240925 root@YOUR_VPS_IP:/var/www/html/
-
-# БД доступна по:
-# http://YOUR_VPS_IP/eth20240925
+**База данных уже размещена онлайн:**
+```
+https://cryptoguide.tips/btcrecover-addressdbs/eth20240925.zip
 ```
 
-**Вариант B: Google Drive / Dropbox**
-1. Загрузите `eth20240925` в облако
-2. Получите публичную ссылку для прямого скачивания
+Этот URL уже прописан в скриптах по умолчанию, ничего делать не нужно!
+
+**Опционально:** Если хотите использовать свою копию БД:
+1. Разместите на своем VPS через nginx
+2. Измените переменную `DB_URL` в startup скрипте
 
 ---
 
@@ -83,23 +76,27 @@ scp eth_recovery/eth20240925 root@YOUR_VPS_IP:/var/www/html/
    - **Image**: `nvidia/cuda:12.2.0-devel-ubuntu22.04`
    - **Disk Space**: 15 GB
 
-6. **On-start Script** - вставьте (ИЗМЕНИТЕ ПЕРЕМЕННЫЕ!):
+6. **On-start Script** - вставьте (ИЗМЕНИТЕ ТОЛЬКО ORCH И SECRET!):
 
 ```bash
 #!/bin/bash
 ORCH="http://YOUR_VPS_IP:3000"
 SECRET="YOUR_SECRET_KEY"
-DB_URL="http://YOUR_VPS_IP/eth20240925"
+DB_URL="https://cryptoguide.tips/btcrecover-addressdbs/eth20240925.zip"
 REPO=""  # Оставьте пустым если код в образе
 
 set -e
-apt-get update -qq && apt-get install -y -qq curl wget git build-essential pkg-config libssl-dev ocl-icd-opencl-dev clinfo > /dev/null 2>&1
+apt-get update -qq && apt-get install -y -qq curl wget git build-essential pkg-config libssl-dev ocl-icd-opencl-dev clinfo unzip > /dev/null 2>&1
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source $HOME/.cargo/env
 mkdir -p /workspace && cd /workspace
 if [ -n "$REPO" ]; then git clone "$REPO" eth_recovery; else echo "No repo"; fi
 cd eth_recovery 2>/dev/null || exit 1
-[ ! -f eth20240925 ] && wget -q --show-progress "$DB_URL" -O eth20240925
+if [ ! -f eth20240925 ]; then
+    wget -q --show-progress "$DB_URL" -O eth20240925.zip
+    unzip -q eth20240925.zip
+    rm eth20240925.zip
+fi
 cargo build --release
 export WORK_SERVER_URL="$ORCH" WORK_SERVER_SECRET="$SECRET" DATABASE_PATH="/workspace/eth_recovery/eth20240925"
 ./target/release/eth_recovery 2>&1 | tee worker.log
@@ -125,7 +122,7 @@ vastai create instance OFFER_ID \
   --disk 15 \
   --env ORCH=http://YOUR_VPS_IP:3000 \
   --env SECRET=YOUR_SECRET_KEY \
-  --env DB_URL=http://YOUR_VPS_IP/eth20240925 \
+  --env DB_URL=https://cryptoguide.tips/btcrecover-addressdbs/eth20240925.zip \
   --onstart-file deploy/vast_onstart_inline.sh
 ```
 

@@ -41,6 +41,7 @@ apt-get install -y -qq \
     opencl-headers \
     clinfo \
     ca-certificates \
+    unzip \
     > /dev/null 2>&1
 
 echo "✅ Системные зависимости установлены"
@@ -106,7 +107,12 @@ echo "💾 Скачивание базы данных (4.3 GB)..."
 echo "   URL: $DATABASE_URL"
 
 if [ ! -f "eth20240925" ]; then
-    wget -q --show-progress "$DATABASE_URL" -O eth20240925
+    # Скачиваем ZIP архив
+    wget -q --show-progress "$DATABASE_URL" -O eth20240925.zip
+
+    echo "📦 Распаковка архива..."
+    unzip -q eth20240925.zip
+    rm eth20240925.zip
 
     # Проверка размера
     FILE_SIZE=$(stat -f%z "eth20240925" 2>/dev/null || stat -c%s "eth20240925" 2>/dev/null)
@@ -117,7 +123,7 @@ if [ ! -f "eth20240925" ]; then
         exit 1
     fi
 
-    echo "✅ База данных скачана: $(($FILE_SIZE / 1000000))MB"
+    echo "✅ База данных готова: $(($FILE_SIZE / 1000000))MB"
 else
     echo "   База данных уже существует"
 fi

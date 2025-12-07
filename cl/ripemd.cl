@@ -192,7 +192,7 @@ void ripemd160_process( RIPEMD160_CTX *ctx, const uint8_t data[64] )
     ctx->state[0] = C;
 }
 
-void ripemd160_Update( RIPEMD160_CTX *ctx, const uint8_t *input, uint32_t ilen )
+void ripemd160_Update( RIPEMD160_CTX *ctx, const __generic uint8_t *input, uint32_t ilen )
 {
     uint32_t fill;
     uint32_t left;

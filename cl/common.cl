@@ -11,7 +11,7 @@ static void memset(uchar *str, int c, size_t n){
   }
 }
 
-static void memcpy(uchar *dest, uchar *src, size_t n){
+static void memcpy(__private uchar *dest, const __generic uchar *src, size_t n){
   for(int i=0;i<n;i++){
     dest[i] = src[i];
   }

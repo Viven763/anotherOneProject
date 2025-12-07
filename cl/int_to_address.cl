@@ -26,7 +26,7 @@ __kernel void int_to_address(ulong mnemonic_start_hi,ulong mnemonic_start_lo, __
   bytes[0] = (mnemonic_hi >> 56) & 0xFF;
 
   uchar mnemonic_hash[32];
-  sha256(&bytes, 16, &mnemonic_hash);
+  sha256(bytes, 16, mnemonic_hash);
   uchar checksum = (mnemonic_hash[0] >> 4) & ((1 << 4)-1);
   
   ushort indices[12];
@@ -83,28 +83,28 @@ __kernel void int_to_address(ulong mnemonic_start_hi,ulong mnemonic_start_lo, __
     key_previous_concat[x+128] = salt[x];
   }
 
-  sha512(&key_previous_concat, 140, &sha512_result);
-  copy_pad_previous(&opad_key, &sha512_result, &key_previous_concat);
-  sha512(&key_previous_concat, 192, &sha512_result);
-  xor_seed_with_round(&seed, &sha512_result);
+  sha512(key_previous_concat, 140, sha512_result);
+  copy_pad_previous(opad_key, sha512_result, key_previous_concat);
+  sha512(key_previous_concat, 192, sha512_result);
+  xor_seed_with_round(seed, sha512_result);
 
   for(int x=1;x<2048;x++){
-    copy_pad_previous(&ipad_key, &sha512_result, &key_previous_concat);
-    sha512(&key_previous_concat, 192, &sha512_result);
-    copy_pad_previous(&opad_key, &sha512_result, &key_previous_concat);
-    sha512(&key_previous_concat, 192, &sha512_result);
-    xor_seed_with_round(&seed, &sha512_result);
+    copy_pad_previous(ipad_key, sha512_result, key_previous_concat);
+    sha512(key_previous_concat, 192, sha512_result);
+    copy_pad_previous(opad_key, sha512_result, key_previous_concat);
+    sha512(key_previous_concat, 192, sha512_result);
+    xor_seed_with_round(seed, sha512_result);
   }
 
   uchar network = BITCOIN_MAINNET;
   extended_private_key_t master_private;
   extended_public_key_t master_public;
 
-  new_master_from_seed(network, &seed, &master_private);
+  new_master_from_seed(network, seed, &master_private);
   public_from_private(&master_private, &master_public);
 
   uchar serialized_master_public[33];
-  serialized_public_key(&master_public, &serialized_master_public);
+  serialized_public_key(&master_public, serialized_master_public);
   extended_private_key_t target_key;
   extended_public_key_t target_public_key;
   hardened_private_child_from_private(&master_private, &target_key, 49);
@@ -115,7 +115,7 @@ __kernel void int_to_address(ulong mnemonic_start_hi,ulong mnemonic_start_lo, __
   public_from_private(&target_key, &target_public_key);
 
   uchar raw_address[25] = {0};
-  p2shwpkh_address_for_public_key(&target_public_key, &raw_address);
+  p2shwpkh_address_for_public_key(&target_public_key, raw_address);
 
   uchar target_address[25] = {0x05, 0xAD, 0xA1, 0x2B, 0x11, 0x3D, 0x9B, 0x19, 0x61, 0x47, 0x57, 0xD1, 0x9F, 0xC0, 0x8D, 0xDD, 0x53, 0x4B, 0xF0, 0x22, 0x76, 0xBD, 0x3A, 0x31, 0x46};
  

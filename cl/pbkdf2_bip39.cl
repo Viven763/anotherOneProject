@@ -16,11 +16,11 @@ void mnemonic_to_seed(
     // Initialize HMAC keys with IPAD and OPAD
     uchar ipad_key[128];
     uchar opad_key[128];
-
+    
     // HMAC key handling: if key > 128 bytes, hash it first
     uchar hmac_key[128];
     uint hmac_key_len;
-
+    
     if (mnemonic_length > 128) {
         // Hash the mnemonic to get a 64-byte key
         uchar hash_buffer[192];
@@ -72,18 +72,19 @@ void mnemonic_to_seed(
         key_previous_concat[x+128] = salt[x];
     }
 
-    // First round of PBKDF2
-    sha512(key_previous_concat, 140, sha512_result);
+    // First round of PBKDF2 - direct pointer cast to ulong* works because sha512
+    // internally handles endianness with SWAP512
+    sha512((ulong*)key_previous_concat, 140, (ulong*)sha512_result);
     copy_pad_previous(opad_key, sha512_result, key_previous_concat);
-    sha512(key_previous_concat, 192, sha512_result);
+    sha512((ulong*)key_previous_concat, 192, (ulong*)sha512_result);
     xor_seed_with_round(seed, sha512_result);
 
     // Remaining 2047 iterations (BIP39 requires 2048 total)
     for(int x=1; x<2048; x++) {
         copy_pad_previous(ipad_key, sha512_result, key_previous_concat);
-        sha512(key_previous_concat, 192, sha512_result);
+        sha512((ulong*)key_previous_concat, 192, (ulong*)sha512_result);
         copy_pad_previous(opad_key, sha512_result, key_previous_concat);
-        sha512(key_previous_concat, 192, sha512_result);
+        sha512((ulong*)key_previous_concat, 192, (ulong*)sha512_result);
         xor_seed_with_round(seed, sha512_result);
     }
 }

@@ -1,5 +1,5 @@
 // Main Ethereum BIP39 Recovery Kernel with Database Lookup
-// Adapted for 24-word mnemonic: 20 known words + 4 missing words at positions 20-23
+// Adapted for 24-word mnemonic: 21 known words + 3 missing words at positions 21-23
 
 // Database record structure (matches Rust DbRecord)
 // Note: This is also defined in db_lookup.cl, but we need it here too
@@ -66,12 +66,13 @@ __kernel void check_mnemonics_eth_db(
     // Each thread gets 256 bytes of scratch space (192 mnemonic + 64 seed)
     __local uchar *mnemonic = scratch_memory + (lid * 256);
 
-    // Hardcoded known words (positions 0-19)
-    __constant const char known_20_words[20][9] = {
-        "switch", "over", "fever", "flavor", "real",
-        "jazz", "vague", "sugar", "throw", "steak",
-        "yellow", "salad", "crush", "donate", "three",
-        "base", "baby", "carbon", "control", "false"
+    // Hardcoded known words (positions 0-20) - 21 known, 3 unknown
+    __constant const char known_21_words[21][9] = {
+        "eager", "uncover", "rifle", "pluck", "bridge",
+        "used", "smile", "neutral", "become", "echo",
+        "habit", "wedding", "tragic", "robust", "organ",
+        "inflict", "edge", "essence", "bronze", "symbol",
+        "tilt"
     };
 
     // Initialize mnemonic area
@@ -79,28 +80,92 @@ __kernel void check_mnemonics_eth_db(
         mnemonic[i] = 0;
     }
 
-    // Copy known words (0-19) to mnemonic with spaces
+    // Copy known words (0-20) to mnemonic with spaces
     int pos = 0;
-    for(int w = 0; w < 20; w++) {
-        for(int c = 0; c < 8 && known_20_words[w][c] != '\0'; c++) {
-            mnemonic[pos++] = known_20_words[w][c];
+    for(int w = 0; w < 21; w++) {
+        for(int c = 0; c < 8 && known_21_words[w][c] != '\0'; c++) {
+            mnemonic[pos++] = known_21_words[w][c];
         }
         mnemonic[pos++] = ' ';  // Space separator
     }
 
-    // Calculate indices for last 4 words from current_offset
-    uint w23_idx = (uint)(current_offset % 2048UL);
-    uint w22_idx = (uint)((current_offset / 2048UL) % 2048UL);
-    uint w21_idx = (uint)((current_offset / 4194304UL) % 2048UL);
-    uint w20_idx = (uint)((current_offset / 8589934592UL) % 2048UL);
+    // Calculate indices for last 3 words from current_offset WITH CHECKSUM OPTIMIZATION
+    // Total combinations: 2048 × 2048 × 8 = 33,554,432 (NOT 2048^3!)
+    // - w21_idx: word 22 (2048 variants)
+    // - w22_idx: word 23 (2048 variants)  
+    // - last_3_bits: last 3 bits of entropy (8 variants)
+    // - w23_idx: word 24 calculated from checksum!
+    
+    uint last_3_bits = (uint)(current_offset % 8UL);                    // 0-7
+    uint w22_idx = (uint)((current_offset / 8UL) % 2048UL);             // word 23
+    uint w21_idx = (uint)((current_offset / 8UL / 2048UL) % 2048UL);    // word 22
 
-    // Append last 4 words from BIP39 wordlist (from mnemonic_constants.cl)
-    uint missing_indices[4] = {w20_idx, w21_idx, w22_idx, w23_idx};
-    for(int w = 0; w < 4; w++) {
-        for(int c = 0; c < 8 && words[missing_indices[w]][c] != '\0'; c++) {
-            mnemonic[pos++] = words[missing_indices[w]][c];
+    // Build word indices for first 23 words
+    uint word_indices[24];
+    // Copy known 21 words indices (hardcoded from wordlist)
+    word_indices[0] = 551;    // eager
+    word_indices[1] = 1893;   // uncover
+    word_indices[2] = 1485;   // rifle
+    word_indices[3] = 1333;   // pluck
+    word_indices[4] = 222;    // bridge
+    word_indices[5] = 1918;   // used
+    word_indices[6] = 1637;   // smile
+    word_indices[7] = 1191;   // neutral
+    word_indices[8] = 159;    // become
+    word_indices[9] = 559;    // echo
+    word_indices[10] = 833;   // habit
+    word_indices[11] = 1991;  // wedding
+    word_indices[12] = 1847;  // tragic
+    word_indices[13] = 1498;  // robust
+    word_indices[14] = 1251;  // organ
+    word_indices[15] = 923;   // inflict
+    word_indices[16] = 562;   // edge
+    word_indices[17] = 618;   // essence
+    word_indices[18] = 229;   // bronze
+    word_indices[19] = 1763;  // symbol
+    word_indices[20] = 1808;  // tilt
+    word_indices[21] = w21_idx;  // UNKNOWN
+    word_indices[22] = w22_idx;  // UNKNOWN
+
+    // Calculate word 24 with BIP39 checksum
+    // Pack 253 bits (23 words × 11 bits) + 3 bits into entropy
+    uchar entropy[32];
+    for(int i = 0; i < 32; i++) entropy[i] = 0;
+
+    uint bit_pos = 0;
+    for(int w = 0; w < 23; w++) {
+        uint word_val = word_indices[w];
+        for(int b = 10; b >= 0; b--) {
+            uint bit = (word_val >> b) & 1;
+            uint byte_idx = bit_pos / 8;
+            uint bit_idx = 7 - (bit_pos % 8);
+            if(byte_idx < 32) {
+                entropy[byte_idx] |= (bit << bit_idx);
+            }
+            bit_pos++;
         }
-        if(w < 3) mnemonic[pos++] = ' ';  // Space separator (not after last word)
+    }
+
+    // Set last 3 bits of entropy
+    entropy[31] = (entropy[31] & 0xF8) | last_3_bits;
+
+    // SHA256 of entropy to get checksum
+    uchar hash[32];
+    for(int i = 0; i < 32; i++) hash[i] = 0;
+    sha256_bytes(entropy, 32, hash);
+
+    // Word 24 index = (last_3_bits << 8) | checksum_byte
+    uint checksum = hash[0];
+    uint w23_idx = (last_3_bits << 8) | checksum;
+    word_indices[23] = w23_idx;
+
+    // Now build mnemonic string from word indices
+    pos = 0;  // Reset position
+    for(int w = 0; w < 24; w++) {
+        for(int c = 0; c < 8 && words[word_indices[w]][c] != '\0'; c++) {
+            mnemonic[pos++] = words[word_indices[w]][c];
+        }
+        if(w < 23) mnemonic[pos++] = ' ';  // Space separator
     }
 
     // Convert mnemonic to seed using PBKDF2-HMAC-SHA512

@@ -21,23 +21,23 @@
 // === 3. Генератор мнемоник ===
 
 // Генерирует 24-словную мнемонику из gid
-// gid = индекс комбинации (0 до 2048^4 - 1)
-// Первые 20 слов фиксированы, последние 4 варьируются
+// gid = индекс комбинации (0 до 2048^3 - 1)
+// Первые 21 слово фиксированы, последние 3 варьируются
 void generate_mnemonic_24(
     ulong gid,
     __constant const uchar (*wordlist)[WORD_LENGTH],
     __constant const uchar (*known_words)[WORD_LENGTH],
     uchar *mnemonic_output
 ) {
-    // Копируем первые 20 известных слов
-    for(int i = 0; i < 20; i++) {
+    // Копируем первые 21 известное слово
+    for(int i = 0; i < 21; i++) {
         for(int j = 0; j < WORD_LENGTH; j++) {
             mnemonic_output[i * WORD_LENGTH + j] = known_words[i][j];
         }
     }
 
-    // Вычисляем индексы для последних 4 слов из gid
-    // gid = w20_idx * 2048^3 + w21_idx * 2048^2 + w22_idx * 2048 + w23_idx
+    // Вычисляем индексы для последних 3 слов из gid
+    // gid = w21_idx * 2048^2 + w22_idx * 2048 + w23_idx
 
     ulong remaining = gid;
     uint w23_idx = (uint)(remaining % 2048UL);
@@ -47,13 +47,9 @@ void generate_mnemonic_24(
     remaining /= 2048UL;
 
     uint w21_idx = (uint)(remaining % 2048UL);
-    remaining /= 2048UL;
 
-    uint w20_idx = (uint)(remaining % 2048UL);
-
-    // Копируем последние 4 слова из wordlist
+    // Копируем последние 3 слова из wordlist
     for(int j = 0; j < WORD_LENGTH; j++) {
-        mnemonic_output[20 * WORD_LENGTH + j] = wordlist[w20_idx][j];
         mnemonic_output[21 * WORD_LENGTH + j] = wordlist[w21_idx][j];
         mnemonic_output[22 * WORD_LENGTH + j] = wordlist[w22_idx][j];
         mnemonic_output[23 * WORD_LENGTH + j] = wordlist[w23_idx][j];
@@ -115,7 +111,7 @@ __kernel void eth_recovery_kernel(
     ulong global_index = start_index + gid;
 
     // Проверяем границы
-    if(global_index >= 17592186044416UL) {  // 2048^4
+    if(global_index >= 8589934592UL) {  // 2048^3
         return;
     }
 

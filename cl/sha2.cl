@@ -371,3 +371,7 @@ static void sha256(__generic const unsigned int *pass, int pass_len, __generic u
 #undef mod
 #undef shr32
 #undef rotl32
+// SHA256 wrapper for uchar* input (needed for BIP39 checksum)
+static void sha256_bytes(uchar *input, uint input_len, uchar *output) {
+    sha256((uint*)input, input_len, (uint*)output);
+}

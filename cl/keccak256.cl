@@ -28,27 +28,26 @@ __constant uint keccak_rho[25] = {
 };
 
 // Pi permutation: pi[i] gives the source index for destination i
+// dest[i] = src[pi[i]]  where pi is the inverse of the standard pi mapping
 __constant uint keccak_pi[25] = {
-     0,  6, 12, 18, 24,
-     3,  9, 10, 16, 22,
-     1,  7, 13, 19, 20,
-     4,  5, 11, 17, 23,
-     2,  8, 14, 15, 21
+     0, 6, 12, 18, 24,
+     3, 9, 10, 16, 22,
+     1, 7, 13, 19, 20,
+     4, 5, 11, 17, 23,
+     2, 8, 14, 15, 21
 };
 
-// Note: rotl64 is defined in sha2.cl using OpenCL's rotate() function
-
 // Keccak-f[1600] permutation
-void keccak_f(ulong state[25]) {
+void keccak_f(ulong *state) {
     for (uint round = 0; round < KECCAK_ROUNDS; round++) {
         ulong C[5], D[5], B[25];
 
-        // Theta
-        for (uint i = 0; i < 5; i++) {
-            C[i] = state[i] ^ state[i + 5] ^ state[i + 10] ^ state[i + 15] ^ state[i + 20];
+        // Theta step
+        for (uint x = 0; x < 5; x++) {
+            C[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
         }
-        for (uint i = 0; i < 5; i++) {
-            D[i] = C[(i + 4) % 5] ^ rotl64(C[(i + 1) % 5], 1);
+        for (uint x = 0; x < 5; x++) {
+            D[x] = C[(x + 4) % 5] ^ rotl64(C[(x + 1) % 5], 1);
         }
         for (uint i = 0; i < 25; i++) {
             state[i] ^= D[i % 5];
@@ -68,19 +67,19 @@ void keccak_f(ulong state[25]) {
             }
         }
 
-        // Iota
+        // Iota step
         state[0] ^= keccak_round_constants[round];
     }
 }
 
 void keccak256(__generic const uchar *input, uint input_len, __generic uchar *output) {
     ulong state[25] = {0};
-    uchar temp[144] = {0};
+    uchar temp[136] = {0};  // Rate = 136 bytes for Keccak-256
 
-    // Absorb phase
-    uint rate = 136; // 1088 bits / 8 = 136 bytes for SHA3-256
+    uint rate = 136; // 1088 bits / 8 = 136 bytes
     uint offset = 0;
 
+    // Absorb phase - process full blocks
     while (input_len >= rate) {
         for (uint i = 0; i < rate / 8; i++) {
             ulong val = 0;
@@ -89,25 +88,24 @@ void keccak256(__generic const uchar *input, uint input_len, __generic uchar *ou
             }
             state[i] ^= val;
         }
-
-        // Keccak-f[1600] permutation
         keccak_f(state);
-
         input_len -= rate;
         offset += rate;
     }
 
-    // Padding
-    for (uint i = 0; i < 144; i++) {
+    // Padding - copy remaining input
+    for (uint i = 0; i < 136; i++) {
         temp[i] = 0;
     }
     for (uint i = 0; i < input_len; i++) {
         temp[i] = input[offset + i];
     }
-    temp[input_len] = 0x01; // Keccak padding (not SHA3 which uses 0x06)
+    
+    // Keccak padding: pad with 0x01 ... 0x80
+    temp[input_len] = 0x01;
     temp[rate - 1] |= 0x80;
 
-    // Final block
+    // Final block absorption
     for (uint i = 0; i < rate / 8; i++) {
         ulong val = 0;
         for (uint j = 0; j < 8; j++) {

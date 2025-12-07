@@ -14,7 +14,7 @@ use serde::Deserialize;
 const WORK_SERVER_URL: &str = "http://90.156.225.121:3000";
 const WORK_SERVER_SECRET: &str = "15a172308d70dede515f9eecc78eaea9345b419581d0361220313d938631b12d";
 const DATABASE_PATH: &str = "eth20240925";
-const BATCH_SIZE: usize = 500_000; // 500k комбинаций за batch
+const BATCH_SIZE: usize = 5_000_000; // 5M комбинаций за batch - загружаем GPU полностью!
 
 // Известные 20 слов
 const KNOWN_WORDS: [&str; 20] = [
@@ -205,10 +205,9 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ GPU Worker готов к работе!\n");
 
-    // Адаптивный batch size
+    // Адаптивный batch size: начинаем с BATCH_SIZE, уменьшаем если нехватка памяти
     let mut current_batch_size = BATCH_SIZE;
-    let min_batch_size = 100_000;      // Минимум 100k
-    let max_batch_size = 25_000_000;   // Максимум 25M
+    let min_batch_size = 100_000;
 
     // 6. Main worker loop
     loop {
@@ -224,19 +223,26 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        // Обрабатываем работу частями (chunking)
+        // Обрабатываем работу частями
         let mut processed = 0u64;
         while processed < work.batch_size {
             let chunk_size = std::cmp::min(current_batch_size as u64, work.batch_size - processed);
             let chunk_offset = work.start_offset + processed;
 
-            println!("🔥 Обработка chunk: offset={}, size={}", chunk_offset, chunk_size);
+            println!("🔥 Chunk: offset={}, size={}", chunk_offset, chunk_size);
 
             // Reset found flag
             let zero = vec![0u32; 1];
-            result_found.write(&zero).enq()?;
+            if let Err(e) = result_found.write(&zero).enq() {
+                if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
+                    current_batch_size = std::cmp::max(current_batch_size / 2, min_batch_size);
+                    println!("⚠️  Память: уменьшаем batch до {}", current_batch_size);
+                    continue;
+                }
+                return Err(e.into());
+            }
 
-            // Build and execute kernel (НЕ пересоздаем ProQue, используем существующий!)
+            // Build and execute kernel
             let kernel_result = pro_que.kernel_builder("check_mnemonics_eth_db")
                 .arg(&db_buffer)
                 .arg(db.records.len() as u64)
@@ -244,62 +250,29 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
                 .arg(&result_found)
                 .arg(&result_offset)
                 .arg(chunk_offset)
-                .global_work_size(chunk_size as usize)  // Динамически меняем размер!
+                .global_work_size(chunk_size as usize)
                 .build()
-                .and_then(|kernel| unsafe { kernel.enq() });
+                .and_then(|k| unsafe { k.enq() });
 
-            match kernel_result {
-                Ok(_) => {
-                    // Дождаться завершения GPU операций
-                    if let Err(e) = pro_que.queue().finish() {
-                        eprintln!("⚠️  Ошибка finish: {}", e);
-                        current_batch_size = std::cmp::max(
-                            (current_batch_size as f64 * 0.5) as usize,
-                            min_batch_size
-                        );
-                        println!("⚠️  Уменьшаем batch до {}", current_batch_size);
-                        continue;
-                    }
-
-                    // Успешно! Можно попробовать увеличить batch
-                    if current_batch_size < max_batch_size {
-                        current_batch_size = std::cmp::min(
-                            (current_batch_size as f64 * 1.2) as usize,
-                            max_batch_size
-                        );
-                        println!("✅ Успех! Увеличиваем batch до {}", current_batch_size);
-                    }
+            if let Err(e) = kernel_result {
+                if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
+                    current_batch_size = std::cmp::max(current_batch_size / 2, min_batch_size);
+                    println!("⚠️  Память: уменьшаем batch до {}", current_batch_size);
+                    continue;
                 }
-                Err(e) => {
-                    // Ошибка памяти - уменьшаем batch
-                    if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
-                        current_batch_size = std::cmp::max(
-                            (current_batch_size as f64 * 0.5) as usize,
-                            min_batch_size
-                        );
-                        println!("⚠️  Нехватка памяти! Уменьшаем batch до {}", current_batch_size);
-                        continue; // Повторяем этот chunk с меньшим размером
-                    } else {
-                        return Err(e.into());
-                    }
-                }
+                return Err(e.into());
             }
 
             // Check if found
             let mut found = vec![0u32; 1];
-            let read_result = result_found.read(&mut found).enq();
-
-            if let Err(e) = read_result {
-                eprintln!("⚠️  Ошибка чтения результата: {}", e);
-                current_batch_size = std::cmp::max(
-                    (current_batch_size as f64 * 0.5) as usize,
-                    min_batch_size
-                );
-                println!("⚠️  Уменьшаем batch до {}", current_batch_size);
-                continue;
+            if let Err(e) = result_found.read(&mut found).enq() {
+                if e.to_string().contains("OUT_OF_RESOURCES") || e.to_string().contains("MEM") {
+                    current_batch_size = std::cmp::max(current_batch_size / 2, min_batch_size);
+                    println!("⚠️  Память: уменьшаем batch до {}", current_batch_size);
+                    continue;
+                }
+                return Err(e.into());
             }
-
-            let found = found;
 
             if found[0] == 1 {
                 // SUCCESS!
@@ -322,6 +295,7 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             processed += chunk_size;
+            println!("   ✓ Обработано {}/{}", processed, work.batch_size);
         }
 
         // Mark work as complete

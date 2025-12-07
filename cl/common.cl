@@ -5,19 +5,19 @@
 
 // Note: rotl64 is defined in sha2.cl using OpenCL's rotate() function
 
-static void memset(uchar *str, int c, size_t n){
+static void memset(__generic uchar *str, int c, size_t n){
   for(int i=0;i<n;i++){
     str[i] = c;
   }
 }
 
-static void memcpy(__private uchar *dest, const __generic uchar *src, size_t n){
+static void memcpy(__generic uchar *dest, const __generic uchar *src, size_t n){
   for(int i=0;i<n;i++){
     dest[i] = src[i];
   }
 }
 
-static void memcpy_offset(uchar *dest, uchar *src, int offset, uchar bytes_to_copy){
+static void memcpy_offset(__generic uchar *dest, __generic uchar *src, int offset, uchar bytes_to_copy){
   for(int i=0;i<bytes_to_copy;i++){
     dest[i] = src[offset+i];
   }

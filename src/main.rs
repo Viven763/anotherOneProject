@@ -14,7 +14,7 @@ use serde::Deserialize;
 const WORK_SERVER_URL: &str = "http://90.156.225.121:3000";
 const WORK_SERVER_SECRET: &str = "15a172308d70dede515f9eecc78eaea9345b419581d0361220313d938631b12d";
 const DATABASE_PATH: &str = "eth20240925";
-const BATCH_SIZE: usize = 1024; // 1K комбинаций - минимум для тестирования register pressure
+const BATCH_SIZE: usize = 100_000; // 100K комбинаций, но local_work_size=8 для register pressure
 
 // Известные 20 слов
 const KNOWN_WORDS: [&str; 20] = [
@@ -244,8 +244,8 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ GPU Worker готов к работе!\n");
 
     // Адаптивный batch size: начинаем с оптимального, уменьшаем если нехватка памяти
-    let mut current_batch_size = optimal_batch_size.min(1024); // Начнем с 1K максимум
-    let min_batch_size = 256; // Минимум 256 потоков
+    let mut current_batch_size = optimal_batch_size;
+    let min_batch_size = 1024; // Минимум 1024 комбинации (но local_work_size=8!)
 
     // 6. Main worker loop
     loop {
@@ -282,8 +282,9 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Build and execute kernel
-            // Устанавливаем маленький local_work_size чтобы уменьшить register pressure
-            let local_work_size = 64; // Маленькие work groups = меньше одновременных потоков
+            // КРИТИЧЕСКИ ВАЖНО: RTX 5090 имеет 65536 регистров НА БЛОК
+            // При heavy kernel (PBKDF2+SHA512) нужно ОЧЕНЬ маленький local_work_size
+            let local_work_size = 8; // 8 потоков = 65536/8 = 8192 регистра на поток
 
             let kernel_result = pro_que.kernel_builder("check_mnemonics_eth_db")
                 .arg(&db_buffer)

@@ -180,6 +180,26 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ OpenCL устройство: {}", pro_que.device().name()?);
     println!("   Max work group size: {}", pro_que.device().max_wg_size()?);
 
+    // Получаем информацию о памяти GPU
+    let global_mem_size = pro_que.device().info(ocl::enums::DeviceInfo::GlobalMemSize)
+        .ok()
+        .and_then(|info| match info {
+            ocl::enums::DeviceInfoResult::GlobalMemSize(size) => Some(size as usize),
+            _ => None,
+        })
+        .unwrap_or(8 * 1024 * 1024 * 1024); // Default 8GB if query fails
+
+    let max_mem_alloc = pro_que.device().info(ocl::enums::DeviceInfo::MaxMemAllocSize)
+        .ok()
+        .and_then(|info| match info {
+            ocl::enums::DeviceInfoResult::MaxMemAllocSize(size) => Some(size as usize),
+            _ => None,
+        })
+        .unwrap_or(global_mem_size / 4); // Default to 25% of global memory
+
+    println!("   Global memory: {} MB", global_mem_size / 1024 / 1024);
+    println!("   Max allocation: {} MB", max_mem_alloc / 1024 / 1024);
+
     // 4. Upload database to GPU
     println!("\n📦 Загрузка БД в GPU ({} MB)...", db.stats().size_mb);
     let db_buffer = pro_que.buffer_builder()
@@ -190,7 +210,24 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ БД загружена в GPU!\n");
 
-    // 5. Create output buffers
+    // 5. Рассчитываем оптимальный batch size на основе доступной памяти
+    let db_size_bytes = db.records.len() * std::mem::size_of::<u64>();
+    let available_memory = (global_mem_size as f64 * 0.7) as usize; // 70% от общей памяти
+    let memory_for_batches = available_memory.saturating_sub(db_size_bytes);
+
+    // Каждая комбинация требует:
+    // - 24 байта для индексов (u32 * 4 неизвестных слова * 1.5x для буферов)
+    // - ~100 байт для промежуточных вычислений
+    let bytes_per_combination = 128;
+    let optimal_batch_size = (memory_for_batches / bytes_per_combination).min(BATCH_SIZE);
+
+    println!("💾 Расчет памяти:");
+    println!("   Доступно GPU памяти: {} MB", global_mem_size / 1024 / 1024);
+    println!("   БД занимает: {} MB", db_size_bytes / 1024 / 1024);
+    println!("   Свободно для батчей: {} MB", memory_for_batches / 1024 / 1024);
+    println!("   Оптимальный batch size: {} комбинаций\n", optimal_batch_size);
+
+    // 6. Create output buffers
     let result_mnemonic = pro_que.buffer_builder::<u8>()
         .len(192) // 24 words * 8 bytes
         .build()?;
@@ -205,8 +242,8 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ GPU Worker готов к работе!\n");
 
-    // Адаптивный batch size: начинаем с BATCH_SIZE, уменьшаем если нехватка памяти
-    let mut current_batch_size = BATCH_SIZE;
+    // Адаптивный batch size: начинаем с оптимального, уменьшаем если нехватка памяти
+    let mut current_batch_size = optimal_batch_size;
     let min_batch_size = 10_000;
 
     // 6. Main worker loop

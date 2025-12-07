@@ -14,7 +14,7 @@ use serde::Deserialize;
 const WORK_SERVER_URL: &str = "http://90.156.225.121:3000";
 const WORK_SERVER_SECRET: &str = "15a172308d70dede515f9eecc78eaea9345b419581d0361220313d938631b12d";
 const DATABASE_PATH: &str = "eth20240925";
-const BATCH_SIZE: usize = 10_000; // 10K комбинаций за batch - безопасный старт
+const BATCH_SIZE: usize = 5_000_000; // 5M комбинаций за batch - работало ранее
 
 // Известные 20 слов
 const KNOWN_WORDS: [&str; 20] = [
@@ -169,10 +169,9 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("   Device: {}", device.name()?);
     println!("   Type: GPU");
 
-    // 3. Create OpenCL context
+    // 3. Create OpenCL context (без pre-allocation dims)
     let pro_que = ProQue::builder()
         .src(&kernel_source)
-        .dims(BATCH_SIZE)
         .platform(platform)
         .device(device)
         .build()?;

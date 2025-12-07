@@ -9,9 +9,9 @@
 // mnemonic_length: length of mnemonic in bytes
 // seed: output buffer (64 bytes)
 void mnemonic_to_seed(
-    __private uchar *mnemonic,
+    __generic uchar *mnemonic,
     uint mnemonic_length,
-    __private uchar *seed
+    __generic uchar *seed
 ) {
     // Initialize HMAC keys with IPAD and OPAD
     uchar ipad_key[128];

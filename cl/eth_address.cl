@@ -2,7 +2,7 @@
 // Ethereum address = last 20 bytes of keccak256(uncompressed_public_key[1:])
 
 // Derive Ethereum address from extended public key
-void eth_address_for_public_key(extended_public_key_t *pub, __private uchar *eth_address) {
+void eth_address_for_public_key(extended_public_key_t *pub, __generic uchar *eth_address) {
     // Get uncompressed public key (65 bytes: 0x04 + 32 bytes X + 32 bytes Y)
     uchar uncompressed_pubkey[65] = {0};
     uncompressed_public_key(pub, uncompressed_pubkey);
@@ -19,7 +19,7 @@ void eth_address_for_public_key(extended_public_key_t *pub, __private uchar *eth
 
 // Derive Ethereum address from BIP44 path: m/44'/60'/0'/0/0
 // This is the standard Ethereum derivation path
-void derive_eth_address_bip44(__private uchar *seed, __private uchar *eth_address) {
+void derive_eth_address_bip44(__generic uchar *seed, __generic uchar *eth_address) {
     // Create master key from seed
     extended_private_key_t master;
     new_master_from_seed(BITCOIN_MAINNET, seed, &master); // Network doesn't matter for Ethereum
@@ -54,7 +54,7 @@ void derive_eth_address_bip44(__private uchar *seed, __private uchar *eth_addres
 }
 
 // Alternative: Derive multiple Ethereum addresses (for checking multiple derivation paths)
-void derive_eth_addresses_multiple_paths(__private uchar *seed, __private uchar *addresses, int num_addresses) {
+void derive_eth_addresses_multiple_paths(__generic uchar *seed, __generic uchar *addresses, int num_addresses) {
     extended_private_key_t master;
     new_master_from_seed(BITCOIN_MAINNET, seed, &master);
 

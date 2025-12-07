@@ -236,22 +236,15 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             let zero = vec![0u32; 1];
             result_found.write(&zero).enq()?;
 
-            // Recreate ProQue with current chunk size
-            let chunk_pro_que = ProQue::builder()
-                .src(&kernel_source)
-                .dims(chunk_size as usize)
-                .platform(platform)
-                .device(device)
-                .build()?;
-
-            // Build and execute kernel
-            let kernel_result = chunk_pro_que.kernel_builder("check_mnemonics_eth_db")
+            // Build and execute kernel (НЕ пересоздаем ProQue, используем существующий!)
+            let kernel_result = pro_que.kernel_builder("check_mnemonics_eth_db")
                 .arg(&db_buffer)
                 .arg(db.records.len() as u64)
                 .arg(&result_mnemonic)
                 .arg(&result_found)
                 .arg(&result_offset)
                 .arg(chunk_offset)
+                .global_work_size(chunk_size as usize)  // Динамически меняем размер!
                 .build()
                 .and_then(|kernel| unsafe { kernel.enq() });
 

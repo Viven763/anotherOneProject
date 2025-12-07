@@ -14,7 +14,7 @@ use serde::Deserialize;
 const WORK_SERVER_URL: &str = "http://90.156.225.121:3000";
 const WORK_SERVER_SECRET: &str = "15a172308d70dede515f9eecc78eaea9345b419581d0361220313d938631b12d";
 const DATABASE_PATH: &str = "eth20240925";
-const BATCH_SIZE: usize = 5_000_000; // 5M комбинаций за batch - работало ранее
+const BATCH_SIZE: usize = 1024; // 1K комбинаций - минимум для тестирования register pressure
 
 // Известные 20 слов
 const KNOWN_WORDS: [&str; 20] = [
@@ -244,8 +244,8 @@ fn run_gpu_worker(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ GPU Worker готов к работе!\n");
 
     // Адаптивный batch size: начинаем с оптимального, уменьшаем если нехватка памяти
-    let mut current_batch_size = optimal_batch_size;
-    let min_batch_size = 10_000;
+    let mut current_batch_size = optimal_batch_size.min(1024); // Начнем с 1K максимум
+    let min_batch_size = 256; // Минимум 256 потоков
 
     // 6. Main worker loop
     loop {
